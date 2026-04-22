@@ -7,7 +7,7 @@ const ARROW_CONNECTION_SCHEMA = {
     fromNode: { type: Type.STRING, description: "Exact text of the node where the arrow starts (the tail end, NOT the arrowhead end)." },
     toNode: { type: Type.STRING, description: "Exact text of the node where the arrow ends (the arrowhead/pointed end)." },
     label: { type: Type.STRING, description: "Visible arrow label such as ΔH, -3267, 6(-394), or blank if none is visible." },
-    labelStatus: { type: Type.STRING, description: "One of: correct, incorrect, missing. Whether the arrow label matches the expected enthalpy value for this reaction step based on the provided reference data. Use 'missing' if no label is written. Use 'correct' if the numerical value (ignoring sign convention differences) matches. Use 'incorrect' if a label is written but the value is wrong." }
+    labelStatus: { type: Type.STRING, description: "One of: correct, incorrect, missing. Compare only the visible numeric value(s) in the label against the reference data table provided. Use 'missing' if no label is written. Use 'correct' if each numeric component in the label appears in the reference data (treat +1 and -1 both as matching a reference value of 1 or -1 — the absolute value must match; ignore the sign entirely). Use 'correct' for expressions like '4(-394) + 4(-286)' if the component values appear in the reference data. Use 'incorrect' only if a numeric label is present but its value cannot be found in the reference data at all. Do NOT re-derive what the correct sign should be from arrow direction or from chemistry context — only compare the written number against the table." }
   },
   required: ["fromNode", "toNode", "label", "labelStatus"]
 };
@@ -829,6 +829,49 @@ function summarizeArrowLabels(arrowDerivedChecks, targetReaction, lowConfidenceE
   return hasUncertain ? "uncertain" : "correct";
 }
 
+function getReferenceAbsoluteValues(question) {
+  return (question?.data?.table || [])
+    .map((row) => row.value)
+    .filter((v) => typeof v === "number" && isFinite(v))
+    .map((v) => Math.abs(v));
+}
+
+function overrideLabelStatusFromReferenceData(arrowConnections, question) {
+  const refAbsValues = getReferenceAbsoluteValues(question);
+  if (refAbsValues.length === 0) {
+    return arrowConnections;
+  }
+
+  return arrowConnections.map((conn) => {
+    if (conn.labelStatus !== "incorrect") {
+      return conn;
+    }
+
+    const label = conn.label?.trim();
+    if (!label || isMissingLabel(label)) {
+      return conn;
+    }
+
+    const simpleNumericMatch = label.match(/^[+-]?\d+(?:\.\d+)?$/);
+    if (!simpleNumericMatch) {
+      return conn;
+    }
+
+    const numericValue = parseFloat(label);
+    if (isNaN(numericValue)) {
+      return conn;
+    }
+
+    const absValue = Math.abs(numericValue);
+    const matchesReference = refAbsValues.some((refAbs) => Math.abs(absValue - refAbs) < 0.6);
+    if (matchesReference) {
+      return { ...conn, labelStatus: "correct" };
+    }
+
+    return conn;
+  });
+}
+
 export async function analyzeStudentWork(question, imageBase64, analysisImages = []) {
   if (!question || !imageBase64) {
     throw new Error("Question and image are required.");
@@ -943,7 +986,10 @@ export async function analyzeStudentWork(question, imageBase64, analysisImages =
   const parsedResponse = JSON.parse(response.text);
   const extractedEquations = normalizeStringArray(parsedResponse.extractedEquations);
   const extractedNodeLabels = normalizeStringArray(parsedResponse.extractedNodeLabels);
-  const arrowConnections = normalizeArrowConnections(parsedResponse.arrowConnections);
+  const arrowConnections = overrideLabelStatusFromReferenceData(
+    normalizeArrowConnections(parsedResponse.arrowConnections),
+    question,
+  );
   const oppositeDirectionDetected = hasOppositeDirections(arrowConnections);
   const extractionNotes = normalizeStringArray(parsedResponse.extractionNotes);
   const reconstructedEquations = reconstructArrowEquations(question, extractedEquations, extractedNodeLabels, arrowConnections);

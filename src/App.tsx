@@ -193,6 +193,42 @@ export default function App() {
     setIsCanvasExpanded((prev) => !prev);
   };
 
+  const handleSubmitFromExpanded = async () => {
+    if (!canvasRef.current) return;
+
+    const imageData = canvasRef.current.getImageData();
+    const analysisImages = canvasRef.current.getAnalysisImages();
+
+    const snapshot = canvasRef.current.getSnapshot();
+    if (snapshot) {
+      setCanvasSnapshot(snapshot);
+    }
+    setIsCanvasExpanded(false);
+
+    if (!imageData || imageData.length < 1000) {
+      setError("Please draw your answer before checking.");
+      return;
+    }
+
+    setIsChecking(true);
+    setError(null);
+    setFeedback(null);
+
+    try {
+      const result = await checkStudentWork(currentQuestion, imageData, analysisImages);
+      setFeedback(result);
+      setUnlockedSuggestedAnswers((previous) => ({
+        ...previous,
+        [currentQuestion.id]: true,
+      }));
+    } catch (err) {
+      console.error(err);
+      setError("Failed to analyze work. Please try again.");
+    } finally {
+      setIsChecking(false);
+    }
+  };
+
   const handleStartCanvas = () => {
     const snapshot = canvasRef.current?.getSnapshot();
     if (snapshot) {
@@ -432,7 +468,7 @@ export default function App() {
                   className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-white border border-natural-border rounded-xl text-[11px] font-black uppercase tracking-widest text-natural-muted hover:text-natural-olive hover:border-natural-olive transition-colors"
                 >
                   {isSuggestedAnswerVisible ? <EyeOff size={14} /> : <Eye size={14} />}
-                  <span>{isSuggestedAnswerVisible ? "Hide Suggested Answer" : "Display Suggested Answer"}</span>
+                  <span>{isSuggestedAnswerVisible ? "Hide Final Answer" : "Display Final Answer"}</span>
                 </button>
               </div>
             )}
@@ -713,33 +749,42 @@ export default function App() {
                   </div>
                 ))}
 
-                <div className="flex items-start gap-2 self-start shrink-0 ml-auto">
-                  <div className="flex items-center gap-2 rounded-full border border-natural-border bg-white/90 px-2 py-1 shadow-sm">
-                    <span className="text-[10px] font-black text-natural-muted">{canvasDisplayScale}%</span>
-                    <input
-                      type="range"
-                      min={25}
-                      max={150}
-                      step={5}
-                      value={canvasDisplayScale}
-                      onChange={(event) => setCanvasDisplayScale(Number(event.target.value))}
-                      className="warm-range w-28 md:w-36"
-                      aria-label="Canvas focus scale"
-                    />
+                <div className="flex flex-col items-end gap-2 self-start shrink-0 ml-auto">
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 rounded-full border border-natural-border bg-white/90 px-2 py-1 shadow-sm">
+                      <span className="text-[10px] font-black text-natural-muted">{canvasDisplayScale}%</span>
+                      <input
+                        type="range"
+                        min={25}
+                        max={150}
+                        step={5}
+                        value={canvasDisplayScale}
+                        onChange={(event) => setCanvasDisplayScale(Number(event.target.value))}
+                        className="warm-range w-28 md:w-36"
+                        aria-label="Canvas focus scale"
+                      />
+                    </div>
+                    <button
+                      onClick={handleClearCanvas}
+                      className="px-3 py-2 text-xs font-bold uppercase tracking-widest text-natural-muted border border-natural-border rounded-lg hover:text-natural-olive hover:border-natural-olive transition-colors"
+                    >
+                      Clear
+                    </button>
+                    <button
+                      onClick={toggleCanvasExpanded}
+                      aria-label="Return from whiteboard focus mode"
+                      className="flex items-center justify-center w-10 h-10 bg-natural-olive text-white rounded-lg hover:opacity-90 transition-opacity"
+                      title="Return"
+                    >
+                      <Minimize2 size={16} />
+                    </button>
                   </div>
                   <button
-                    onClick={handleClearCanvas}
-                    className="px-3 py-2 text-xs font-bold uppercase tracking-widest text-natural-muted border border-natural-border rounded-lg hover:text-natural-olive hover:border-natural-olive transition-colors"
+                    onClick={handleSubmitFromExpanded}
+                    className="flex items-center gap-2 px-5 py-2 bg-natural-green text-white rounded-lg font-semibold text-sm hover:opacity-90 active:scale-95 transition-all shadow-sm"
                   >
-                    Clear
-                  </button>
-                  <button
-                    onClick={toggleCanvasExpanded}
-                    aria-label="Return from whiteboard focus mode"
-                    className="flex items-center justify-center w-10 h-10 bg-natural-olive text-white rounded-lg hover:opacity-90 transition-opacity"
-                    title="Return"
-                  >
-                    <Minimize2 size={16} />
+                    <CheckCircle2 size={16} />
+                    <span>Submit Answer</span>
                   </button>
                 </div>
               </div>
