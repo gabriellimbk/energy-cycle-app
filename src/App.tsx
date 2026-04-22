@@ -74,6 +74,20 @@ const formatEnthalpyValue = (value: number) => {
   return value > 0 ? `+${value}` : `${value}`;
 };
 
+const SUBSCRIPT_DIGITS: Record<string, string> = {
+  '0': '₀', '1': '₁', '2': '₂', '3': '₃', '4': '₄',
+  '5': '₅', '6': '₆', '7': '₇', '8': '₈', '9': '₉',
+};
+
+function formatEquationForDisplay(equation: string): string {
+  return equation
+    .replace(/->/g, ' → ')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/([A-Za-z)])(\d+)(?=[A-Za-z()\s+→\-]|$)/g, (_, prefix, digits) =>
+      prefix + digits.split('').map((d: string) => SUBSCRIPT_DIGITS[d] ?? d).join('')
+    );
+}
+
 
 function shortenComment(comment: string): string {
   const c = comment.toLowerCase();
@@ -420,15 +434,9 @@ export default function App() {
                       <Maximize2 size={12} />
                       Expand
                     </button>
-                    <button 
-                      onClick={handleClearCanvas}
-                      className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest font-black text-natural-muted hover:text-natural-olive transition-colors underline underline-offset-4 decoration-natural-tan/30"
-                    >
-                      Clear
-                    </button>
                   </div>
                 </div>
-                
+
                 <div className="flex-1 relative min-h-0">
                   <DrawingCanvas
                     ref={canvasRef}
@@ -436,6 +444,7 @@ export default function App() {
                     displayScale={canvasDisplayScale / 100}
                     templateLayout={canvasTemplateLayout}
                     onTemplateChange={setCanvasTemplateLayout}
+                    onClear={handleClearCanvas}
                   />
                   {!hasStartedCanvas && (
                     <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/72 backdrop-blur-[2px]">
@@ -569,7 +578,7 @@ export default function App() {
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
                                 <div className="text-[12px] font-serif italic text-natural-olive leading-relaxed">
-                                  {entry.equation}
+                                  {formatEquationForDisplay(entry.equation)}
                                 </div>
                                 {entry.source !== 'explicit' && (
                                   <div className="mt-1 flex items-center gap-1.5 flex-wrap">
@@ -749,7 +758,7 @@ export default function App() {
                   </div>
                 ))}
 
-                <div className="flex flex-col items-end gap-2 self-start shrink-0 ml-auto">
+                <div className="flex flex-col items-start gap-2 self-start shrink-0 ml-auto">
                   <div className="flex items-center gap-2">
                     <div className="flex items-center gap-2 rounded-full border border-natural-border bg-white/90 px-2 py-1 shadow-sm">
                       <span className="text-[10px] font-black text-natural-muted">{canvasDisplayScale}%</span>
@@ -764,12 +773,6 @@ export default function App() {
                         aria-label="Canvas focus scale"
                       />
                     </div>
-                    <button
-                      onClick={handleClearCanvas}
-                      className="px-3 py-2 text-xs font-bold uppercase tracking-widest text-natural-muted border border-natural-border rounded-lg hover:text-natural-olive hover:border-natural-olive transition-colors"
-                    >
-                      Clear
-                    </button>
                     <button
                       onClick={toggleCanvasExpanded}
                       aria-label="Return from whiteboard focus mode"
@@ -797,6 +800,7 @@ export default function App() {
                 displayScale={canvasDisplayScale / 100}
                 templateLayout={canvasTemplateLayout}
                 onTemplateChange={setCanvasTemplateLayout}
+                onClear={handleClearCanvas}
               />
             </div>
           </div>

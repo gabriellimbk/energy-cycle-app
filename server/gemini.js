@@ -875,6 +875,130 @@ function summarizeArrowLabels(arrowDerivedChecks, targetReaction, lowConfidenceE
   return hasUncertain ? "uncertain" : "correct";
 }
 
+const UNICODE_SUBSCRIPT_TO_ASCII = {
+  "₀": "0", "₁": "1", "₂": "2", "₃": "3", "₄": "4",
+  "₅": "5", "₆": "6", "₇": "7", "₈": "8", "₉": "9",
+};
+
+function normalizeFormulaKey(text) {
+  const asciiText = Array.from(text).map((c) => UNICODE_SUBSCRIPT_TO_ASCII[c] ?? c).join("");
+  return asciiText
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/\s*\((?:s|l|g|aq)\)\s*$/i, "")
+    .trim();
+}
+
+function extractSimpleNumericFromLabel(label) {
+  if (!label || isMissingLabel(label)) {
+    return null;
+  }
+
+  const cleaned = String(label).replace(/[()]/g, "").trim();
+  const match = cleaned.match(/^[+-]?\d+(?:\.\d+)?$/);
+  return match ? parseFloat(match[0]) : null;
+}
+
+function extractProductFromReferenceEquation(equationText) {
+  const sides = equationText.split(/\s*(?:->|→|⟶|⟹|=>|=)\s*/);
+  if (sides.length !== 2) {
+    return null;
+  }
+
+  const rightTerms = sides[1].trim().split("+").map((s) => s.trim()).filter(Boolean);
+  if (rightTerms.length !== 1) {
+    return null;
+  }
+
+  const match = rightTerms[0].match(/^(\d+(?:\/\d+)?|\d*\.\d+)?\s*(.+)$/);
+  if (!match) {
+    return null;
+  }
+
+  const [, coeffText, formulaAndState] = match;
+  const coeff = coeffText
+    ? (coeffText.includes("/")
+        ? Number(coeffText.split("/")[0]) / Number(coeffText.split("/")[1])
+        : parseFloat(coeffText))
+    : 1;
+
+  return { formulaKey: normalizeFormulaKey(formulaAndState), coeff };
+}
+
+function findCoeffInNodeText(nodeText, targetFormulaKey) {
+  for (const term of nodeText.split("+").map((s) => s.trim()).filter(Boolean)) {
+    const match = term.match(/^(\d+(?:\/\d+)?|\d*\.\d+)?\s*(.+)$/);
+    if (!match) {
+      continue;
+    }
+
+    const [, coeffText, formulaAndState] = match;
+    if (normalizeFormulaKey(formulaAndState) === targetFormulaKey) {
+      return coeffText
+        ? (coeffText.includes("/")
+            ? Number(coeffText.split("/")[0]) / Number(coeffText.split("/")[1])
+            : parseFloat(coeffText))
+        : 1;
+    }
+  }
+
+  return 0;
+}
+
+function validateLabelStoichiometry(arrowConnections, question) {
+  const referenceTable = question?.data?.table || [];
+
+  return arrowConnections.map((conn) => {
+    if (conn.labelStatus !== "correct") {
+      return conn;
+    }
+
+    const labelNum = extractSimpleNumericFromLabel(conn.label);
+    if (labelNum === null) {
+      return conn;
+    }
+
+    for (const row of referenceTable) {
+      if (typeof row.value !== "number" || !row.equation) {
+        continue;
+      }
+
+      if (Math.abs(Math.abs(row.value) - Math.abs(labelNum)) > 0.6) {
+        continue;
+      }
+
+      const refProduct = extractProductFromReferenceEquation(row.equation);
+      if (!refProduct) {
+        continue;
+      }
+
+      if (conn.toNode) {
+        const coeff = findCoeffInNodeText(conn.toNode, refProduct.formulaKey);
+        if (coeff > 1) {
+          const valuePerMole = row.value / refProduct.coeff;
+          const expected = coeff * valuePerMole;
+          if (Math.abs(labelNum - expected) > 0.6) {
+            return { ...conn, labelStatus: "incorrect" };
+          }
+        }
+      }
+
+      if (conn.fromNode) {
+        const coeff = findCoeffInNodeText(conn.fromNode, refProduct.formulaKey);
+        if (coeff > 1) {
+          const valuePerMole = row.value / refProduct.coeff;
+          const expected = -coeff * valuePerMole;
+          if (Math.abs(labelNum - expected) > 0.6) {
+            return { ...conn, labelStatus: "incorrect" };
+          }
+        }
+      }
+    }
+
+    return conn;
+  });
+}
+
 function getReferenceAbsoluteValues(question) {
   return (question?.data?.table || [])
     .map((row) => row.value)
@@ -1032,8 +1156,11 @@ export async function analyzeStudentWork(question, imageBase64, analysisImages =
   const parsedResponse = JSON.parse(response.text);
   const extractedEquations = normalizeStringArray(parsedResponse.extractedEquations);
   const extractedNodeLabels = normalizeStringArray(parsedResponse.extractedNodeLabels);
-  const arrowConnections = overrideLabelStatusFromReferenceData(
-    normalizeArrowConnections(parsedResponse.arrowConnections),
+  const arrowConnections = validateLabelStoichiometry(
+    overrideLabelStatusFromReferenceData(
+      normalizeArrowConnections(parsedResponse.arrowConnections),
+      question,
+    ),
     question,
   );
   const oppositeDirectionDetected = hasOppositeDirections(arrowConnections);

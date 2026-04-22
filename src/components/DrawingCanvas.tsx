@@ -33,6 +33,7 @@ interface DrawingCanvasProps {
   displayScale?: number;
   templateLayout?: TemplateLayout;
   onTemplateChange?: (layout: TemplateLayout) => void;
+  onClear?: () => void;
 }
 
 interface StrokePoint {
@@ -178,7 +179,7 @@ function applyTemplateOffset(
   }));
 }
 
-const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({ initialSnapshot, displayScale = 1, templateLayout = 3, onTemplateChange }, ref) => {
+const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({ initialSnapshot, displayScale = 1, templateLayout = 3, onTemplateChange, onClear }, ref) => {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const scaledPaperRef = useRef<HTMLDivElement>(null);
   const paperRef = useRef<HTMLDivElement>(null);
@@ -1381,6 +1382,15 @@ const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({ initia
             {layout}
           </button>
         ))}
+        {onClear && (
+          <button
+            onClick={onClear}
+            className="px-3 py-2.5 rounded-lg transition-all shadow-sm border text-sm font-black leading-none bg-white text-natural-muted border-natural-border hover:bg-natural-bg hover:text-natural-ink"
+            title="Clear canvas"
+          >
+            Clear
+          </button>
+        )}
       </div>
 
       <div
