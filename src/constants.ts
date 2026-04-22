@@ -135,14 +135,14 @@ export const QUESTIONS: Question[] = [
   },
   {
     id: "q29",
-    title: "Combustion of Methanoic Acid",
+    title: "Combustion of Ethanol",
     instruction: "Using the data in the table below, draw an energy cycle to calculate ΔH for the following reaction:",
     data: {
-      reaction: "HCOOH(l) + ½O₂(g) → CO₂(g) + H₂O(l)",
+      reaction: "C₂H₅OH(l) + 3O₂(g) → 2CO₂(g) + 3H₂O(l)",
       table: [
         {
-          enthalpy: "ΔH_f of HCOOH(l)",
-          value: -425,
+          enthalpy: "ΔH_f of C₂H₅OH(l)",
+          value: -278,
         },
         {
           enthalpy: "ΔH_f of CO₂(g)",
@@ -154,8 +154,8 @@ export const QUESTIONS: Question[] = [
         },
       ],
     },
-    answerHessLaw: "ΔH = ΔH_f[CO₂(g)] + ΔH_f[H₂O(l)] - ΔH_f[HCOOH(l)]",
-    expectedValue: "-255 kJ mol⁻¹",
+    answerHessLaw: "ΔH = 2ΔH_f[CO₂(g)] + 3ΔH_f[H₂O(l)] - ΔH_f[C₂H₅OH(l)]",
+    expectedValue: "-1368 kJ mol⁻¹",
   },
   {
     id: "q36",
