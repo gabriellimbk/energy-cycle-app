@@ -211,12 +211,13 @@ function sanitizeNodeLabel(value) {
     return "";
   }
 
-  const cleanedLines = value
+  return value
     .split(/\n+/)
-    .map((line) => stripInlineOxygenAnnotation(line.trim()))
-    .filter((line) => line && !line.startsWith("+"));
-
-  return cleanedLines.join(" ").replace(/\s+/g, " ").trim();
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function normalizeComparableChemistryText(value) {
@@ -372,7 +373,6 @@ function snapToReferenceNode(value, referenceNodes) {
 
     if (
       comparable === candidateComparable ||
-      comparable.includes(candidateComparable) ||
       candidateComparable.includes(comparable)
     ) {
       return candidate;
