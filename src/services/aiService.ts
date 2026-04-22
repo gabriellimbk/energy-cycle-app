@@ -1,6 +1,6 @@
 import { Question, Feedback } from "../types";
 
-export async function checkStudentWork(question: Question, imageBase64: string): Promise<Feedback> {
+export async function checkStudentWork(question: Question, imageBase64: string, analysisImages: string[] = []): Promise<Feedback> {
   const response = await fetch("/api/check-student-work", {
     method: "POST",
     headers: {
@@ -9,6 +9,7 @@ export async function checkStudentWork(question: Question, imageBase64: string):
     body: JSON.stringify({
       question,
       imageBase64,
+      analysisImages,
     }),
   });
 

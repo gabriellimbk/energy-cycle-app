@@ -19,6 +19,17 @@ export interface Feedback {
   score: number;
   comments: string[];
   hessLawApplication: string;
+  summary: {
+    cycleStructure: "complete" | "incomplete" | "uncertain";
+    stateSymbols: "correct" | "incorrect" | "uncertain";
+    arrowLabels: "correct" | "incorrect" | "uncertain";
+    hessLaw: "correct" | "incorrect" | "missing" | "uncertain";
+    finalDeltaH: "correct" | "incorrect" | "missing" | "uncertain";
+  };
+  diagnostics: {
+    missingStateSpecies: string[];
+    stateEvidenceSpecies: string[];
+  };
   extractedEquations: string[];
   extractedNodeLabels: string[];
   arrowConnections: Array<{

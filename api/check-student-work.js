@@ -7,8 +7,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { question, imageBase64 } = req.body ?? {};
-    const feedback = await analyzeStudentWork(question, imageBase64);
+    const { question, imageBase64, analysisImages } = req.body ?? {};
+    const feedback = await analyzeStudentWork(question, imageBase64, analysisImages);
     return res.status(200).json(feedback);
   } catch (error) {
     console.error(error);

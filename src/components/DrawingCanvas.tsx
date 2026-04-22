@@ -23,6 +23,7 @@ export type TemplateLayout = 3 | 4 | 5;
 export interface DrawingCanvasRef {
   clear: () => void;
   getImageData: () => string;
+  getAnalysisImages: () => string[];
   getSnapshot: () => DrawingCanvasSnapshot | null;
   focusTemplate: () => void;
 }
@@ -46,6 +47,13 @@ interface Stroke {
   points: StrokePoint[];
 }
 
+interface ExportRegion {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
 const PENCIL_STROKE_WIDTH = 3;
 const ERASER_STROKE_WIDTH = 20;
 const DRAW_COLOR = '#1a1a1a';
@@ -59,6 +67,7 @@ const MIN_BOARD_WIDTH = 1800;
 const MIN_BOARD_HEIGHT = 1200;
 const TEMPLATE_STROKE_COLOR = '#477a7a';
 const TEMPLATE_BORDER = '2px dashed rgba(71, 122, 122, 0.9)';
+const ANALYSIS_EXPORT_SCALE = 2;
 
 function samePoint(left: StrokePoint, right: StrokePoint) {
   return left.x === right.x && left.y === right.y;
@@ -141,6 +150,20 @@ function getTemplateBounds(templateLayout: TemplateLayout, width: number, height
     top,
     width: right - left,
     height: bottom - top,
+  };
+}
+
+function clampRegion(region: ExportRegion, width: number, height: number): ExportRegion {
+  const left = Math.max(0, Math.min(region.left, width));
+  const top = Math.max(0, Math.min(region.top, height));
+  const right = Math.max(left + 1, Math.min(region.left + region.width, width));
+  const bottom = Math.max(top + 1, Math.min(region.top + region.height, height));
+
+  return {
+    left,
+    top,
+    width: Math.max(1, right - left),
+    height: Math.max(1, bottom - top),
   };
 }
 
@@ -314,6 +337,102 @@ const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({ initia
       size: stroke.size,
       points: stroke.points.map((point) => ({ ...point })),
     }));
+  }, []);
+
+  const getStrokeBounds = useCallback((strokes: Stroke[]) => {
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+
+    for (const stroke of strokes) {
+      const padding = Math.max(12, stroke.size * 1.75);
+      for (const point of stroke.points) {
+        minX = Math.min(minX, point.x - padding);
+        minY = Math.min(minY, point.y - padding);
+        maxX = Math.max(maxX, point.x + padding);
+        maxY = Math.max(maxY, point.y + padding);
+      }
+    }
+
+    if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+      return null;
+    }
+
+    return clampRegion({
+      left: minX,
+      top: minY,
+      width: maxX - minX,
+      height: maxY - minY,
+    }, boardSizeRef.current.width, boardSizeRef.current.height);
+  }, []);
+
+  const expandRegion = useCallback((region: ExportRegion, paddingX: number, paddingY: number) => {
+    return clampRegion({
+      left: region.left - paddingX,
+      top: region.top - paddingY,
+      width: region.width + paddingX * 2,
+      height: region.height + paddingY * 2,
+    }, boardSizeRef.current.width, boardSizeRef.current.height);
+  }, []);
+
+  const mergeRegions = useCallback((regions: Array<ExportRegion | null | undefined>) => {
+    const validRegions = regions.filter(Boolean) as ExportRegion[];
+    if (validRegions.length === 0) {
+      return null;
+    }
+
+    const left = Math.min(...validRegions.map((region) => region.left));
+    const top = Math.min(...validRegions.map((region) => region.top));
+    const right = Math.max(...validRegions.map((region) => region.left + region.width));
+    const bottom = Math.max(...validRegions.map((region) => region.top + region.height));
+
+    return clampRegion({
+      left,
+      top,
+      width: right - left,
+      height: bottom - top,
+    }, boardSizeRef.current.width, boardSizeRef.current.height);
+  }, []);
+
+  const createRenderedExportCanvas = useCallback((scale = 1) => {
+    const exportCanvas = document.createElement('canvas');
+    exportCanvas.width = Math.max(1, Math.round(boardSizeRef.current.width * scale));
+    exportCanvas.height = Math.max(1, Math.round(boardSizeRef.current.height * scale));
+    const exportContext = exportCanvas.getContext('2d');
+    if (!exportContext) {
+      return null;
+    }
+
+    exportContext.setTransform(scale, 0, 0, scale, 0, 0);
+    renderBoardToContext(exportContext, boardSizeRef.current.width, boardSizeRef.current.height, strokesRef.current);
+    exportContext.setTransform(1, 0, 0, 1, 0, 0);
+
+    return exportCanvas;
+  }, [renderBoardToContext]);
+
+  const createCroppedDataUrl = useCallback((sourceCanvas: HTMLCanvasElement, region: ExportRegion, scale = 1) => {
+    const cropCanvas = document.createElement('canvas');
+    cropCanvas.width = Math.max(1, Math.round(region.width * scale));
+    cropCanvas.height = Math.max(1, Math.round(region.height * scale));
+    const cropContext = cropCanvas.getContext('2d');
+    if (!cropContext) {
+      return '';
+    }
+
+    cropContext.drawImage(
+      sourceCanvas,
+      Math.round(region.left * scale),
+      Math.round(region.top * scale),
+      Math.round(region.width * scale),
+      Math.round(region.height * scale),
+      0,
+      0,
+      cropCanvas.width,
+      cropCanvas.height,
+    );
+
+    return cropCanvas.toDataURL('image/png');
   }, []);
 
   const renderBoardToContext = useCallback((target: CanvasRenderingContext2D, width: number, height: number, strokes: Stroke[]) => {
@@ -831,29 +950,55 @@ const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({ initia
       redrawAll();
     },
     getImageData: () => {
-      const exportCanvas = document.createElement('canvas');
-      exportCanvas.width = boardSizeRef.current.width;
-      exportCanvas.height = boardSizeRef.current.height;
-      const exportContext = exportCanvas.getContext('2d');
-      if (!exportContext) {
+      const exportCanvas = createRenderedExportCanvas();
+      if (!exportCanvas) {
         return '';
       }
 
-      renderBoardToContext(exportContext, boardSizeRef.current.width, boardSizeRef.current.height, strokesRef.current);
-
       return exportCanvas.toDataURL('image/png');
+    },
+    getAnalysisImages: () => {
+      const exportCanvas = createRenderedExportCanvas(ANALYSIS_EXPORT_SCALE);
+      if (!exportCanvas) {
+        return [];
+      }
+
+      const strokeBounds = getStrokeBounds(strokesRef.current);
+      const rawTemplateBounds = getTemplateBounds(templateLayout as TemplateLayout, boardSizeRef.current.width, boardSizeRef.current.height);
+      const templateBounds = expandRegion(
+        clampRegion(
+          {
+            ...rawTemplateBounds,
+            left: rawTemplateBounds.left + templateOffsetRef.current.x,
+            top: rawTemplateBounds.top + templateOffsetRef.current.y,
+          },
+          boardSizeRef.current.width,
+          boardSizeRef.current.height,
+        ),
+        140,
+        140,
+      );
+      const contentFocus = strokeBounds ? expandRegion(strokeBounds, 140, 140) : null;
+      const mergedFocus = mergeRegions([templateBounds, contentFocus]);
+
+      const images = [exportCanvas.toDataURL('image/png')];
+
+      if (mergedFocus) {
+        images.push(createCroppedDataUrl(exportCanvas, mergedFocus, ANALYSIS_EXPORT_SCALE));
+      }
+
+      if (contentFocus && (!mergedFocus || contentFocus.width !== mergedFocus.width || contentFocus.height !== mergedFocus.height || contentFocus.left !== mergedFocus.left || contentFocus.top !== mergedFocus.top)) {
+        images.push(createCroppedDataUrl(exportCanvas, contentFocus, ANALYSIS_EXPORT_SCALE));
+      }
+
+      return images.filter(Boolean);
     },
     getSnapshot: () => {
       const scroller = scrollerRef.current;
-      const exportCanvas = document.createElement('canvas');
-      exportCanvas.width = boardSizeRef.current.width;
-      exportCanvas.height = boardSizeRef.current.height;
-      const exportContext = exportCanvas.getContext('2d');
-      if (!exportContext) {
+      const exportCanvas = createRenderedExportCanvas();
+      if (!exportCanvas) {
         return null;
       }
-
-      renderBoardToContext(exportContext, boardSizeRef.current.width, boardSizeRef.current.height, strokesRef.current);
 
       return {
         imageData: exportCanvas.toDataURL('image/png'),
@@ -869,7 +1014,7 @@ const DrawingCanvas = forwardRef<DrawingCanvasRef, DrawingCanvasProps>(({ initia
     focusTemplate: () => {
       focusTemplateViewport();
     },
-  }), [applyPaperSize, cloneStrokes, focusTemplateViewport, redrawAll, renderBoardToContext, resizeCanvas, syncViewportMetrics]);
+  }), [applyPaperSize, cloneStrokes, createCroppedDataUrl, createRenderedExportCanvas, expandRegion, focusTemplateViewport, getStrokeBounds, mergeRegions, redrawAll, resizeCanvas, syncViewportMetrics, templateLayout]);
 
   const startDrawing = useCallback((event: PointerEvent) => {
     if (isDrawingRef.current || event.pointerType !== 'pen' && event.pointerType !== 'mouse') {

@@ -31,12 +31,60 @@ function replaceMappedCharacters(value, characterMap) {
   return Array.from(value).map((character) => characterMap[character] ?? character).join("");
 }
 
-function normalizeEquationText(value) {
+export function normalizeEquationText(value) {
   return replaceMappedCharacters(replaceMappedCharacters(value, SUBSCRIPT_MAP), SUPERSCRIPT_MAP)
     .replace(/[“”]/g, "\"")
     .replace(/[‘’]/g, "'")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+export function hasStateSuffix(value) {
+  return STATE_SUFFIX_PATTERN.test(normalizeEquationText(value));
+}
+
+export function stripStateSuffix(value) {
+  return normalizeEquationText(value).replace(STATE_SUFFIX_PATTERN, "").trim();
+}
+
+export function normalizeSpeciesFormula(value) {
+  const normalized = stripStateSuffix(value)
+    .replace(/^["']|["']$/g, "")
+    .replace(/^(\d+(?:\/\d+)?|\d*\.\d+)\s*/, "")
+    .trim();
+
+  const match = normalized.match(/^([A-Za-z(][A-Za-z0-9()]*)$/);
+  return match ? match[1] : "";
+}
+
+export function collectSpeciesFromText(value) {
+  const normalized = normalizeEquationText(value);
+  if (!normalized) {
+    return [];
+  }
+
+  return normalized
+    .split(/(?:->|\u2192|\u27F6|\u27F9|=>|=|\+|\n|,)/)
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+    .map((segment) => {
+      const formula = normalizeSpeciesFormula(segment);
+      if (!formula) {
+        return null;
+      }
+
+      return {
+        text: segment,
+        formula,
+        normalizedFormula: formula.toLowerCase(),
+        hasStateSymbol: hasStateSuffix(segment),
+      };
+    })
+    .filter(Boolean);
+}
+
+export function collectSpeciesFromTexts(values = []) {
+  return values.flatMap((value) => collectSpeciesFromText(value));
 }
 
 function parseCoefficient(rawValue) {

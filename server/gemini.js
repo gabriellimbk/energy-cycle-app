@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { validateExtractedEquations } from "./chemistryValidation.js";
+import { collectSpeciesFromTexts, normalizeEquationText, validateExtractedEquations } from "./chemistryValidation.js";
 
 const ARROW_CONNECTION_SCHEMA = {
   type: Type.OBJECT,
@@ -71,6 +71,10 @@ function getGeminiClient() {
   return new GoogleGenAI({ apiKey });
 }
 
+function getGeminiModel() {
+  return process.env.GEMINI_MODEL || "gemini-2.5-flash";
+}
+
 function normalizeStringArray(value) {
   return Array.isArray(value) ? value.filter((entry) => typeof entry === "string") : [];
 }
@@ -99,6 +103,23 @@ function normalizeTernaryStatus(value) {
   }
 
   return "";
+}
+
+function normalizeSummaryStatus(value) {
+  if (typeof value !== "string") {
+    return "uncertain";
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "correct" || normalized === "incorrect" || normalized === "missing") {
+    return normalized;
+  }
+
+  if (normalized === "complete" || normalized === "incomplete") {
+    return normalized;
+  }
+
+  return "uncertain";
 }
 
 function normalizeArrowConnections(value) {
@@ -209,6 +230,70 @@ function normalizeComparableChemistryText(value) {
     .replace(/[â†’→]/g, "->")
     .replace(/[()]/g, (char) => char)
     .trim();
+}
+
+function getQuestionReferenceTexts(question) {
+  const texts = [question?.data?.reaction || ""];
+
+  for (const row of question?.data?.table || []) {
+    if (typeof row?.equation === "string") {
+      texts.push(row.equation);
+    }
+  }
+
+  return texts.filter(Boolean);
+}
+
+function dedupeStrings(values) {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
+function evaluateStateSymbols(question, extractedEquations, extractedNodeLabels, arrowConnections, lowConfidenceExtraction) {
+  const expectedSpecies = collectSpeciesFromTexts(getQuestionReferenceTexts(question));
+  const observedSpecies = collectSpeciesFromTexts([
+    ...extractedEquations,
+    ...extractedNodeLabels,
+    ...arrowConnections.flatMap((connection) => [connection.fromNode, connection.toNode]),
+  ]);
+
+  const expectedByFormula = new Map();
+  for (const entry of expectedSpecies) {
+    if (!expectedByFormula.has(entry.normalizedFormula)) {
+      expectedByFormula.set(entry.normalizedFormula, entry.formula);
+    }
+  }
+
+  const stateEvidenceSpecies = [];
+  const missingStateSpecies = [];
+  let unseenCount = 0;
+
+  for (const [normalizedFormula, formula] of expectedByFormula.entries()) {
+    const matches = observedSpecies.filter((entry) => entry.normalizedFormula === normalizedFormula);
+    if (matches.some((entry) => entry.hasStateSymbol)) {
+      stateEvidenceSpecies.push(formula);
+      continue;
+    }
+
+    if (matches.length > 0) {
+      missingStateSpecies.push(formula);
+      continue;
+    }
+
+    unseenCount += 1;
+  }
+
+  let status = "uncertain";
+  if (missingStateSpecies.length > 0) {
+    status = lowConfidenceExtraction ? "uncertain" : "incorrect";
+  } else if (expectedByFormula.size > 0 && unseenCount === 0) {
+    status = "correct";
+  }
+
+  return {
+    status,
+    missingStateSpecies: dedupeStrings(missingStateSpecies),
+    stateEvidenceSpecies: dedupeStrings(stateEvidenceSpecies),
+  };
 }
 
 function splitReactionSides(reaction) {
@@ -603,55 +688,62 @@ function isLowConfidenceExtraction(extractionNotes, uncertainExtractions) {
   return extractionNotes.length > 0 || uncertainExtractions.length > 0;
 }
 
-function getArrowLabelStatus(modelComments, arrowDerivedChecks) {
-  if (arrowDerivedChecks.length === 0) {
-    return null;
+function isTargetReactionArrow(entry, targetReaction) {
+  if (!entry || !targetReaction) {
+    return false;
   }
 
-  const hasMissingLabel = arrowDerivedChecks.some(
-    (entry) => entry.labelStatus === "missing" || entry.hasCompleteLabel === false
+  const fromComparable = normalizeComparableChemistryText(entry.fromNode);
+  const toComparable = normalizeComparableChemistryText(entry.toNode);
+  const leftComparable = normalizeComparableChemistryText(targetReaction.left);
+  const rightComparable = normalizeComparableChemistryText(targetReaction.right);
+
+  return (
+    (fromComparable === leftComparable && toComparable === rightComparable) ||
+    (fromComparable === rightComparable && toComparable === leftComparable)
   );
-  if (hasMissingLabel) {
-    return "incorrectly labelled arrows";
-  }
-
-  const hasIncorrectLabel = arrowDerivedChecks.some(
-    (entry) => entry.labelStatus === "incorrect"
-  );
-  if (hasIncorrectLabel) {
-    return "incorrectly labelled arrows";
-  }
-
-  const allHaveExplicitStatus = arrowDerivedChecks.every(
-    (entry) => entry.labelStatus === "correct" || entry.labelStatus === "incorrect" || entry.labelStatus === "missing"
-  );
-  if (allHaveExplicitStatus) {
-    return "correctly labelled arrows";
-  }
-
-  // Fallback: text-mine model comments only when AI did not return per-arrow labelStatus
-  const hasNegativeArrowFeedback = modelComments.some((comment) => {
-    if (typeof comment !== "string") {
-      return false;
-    }
-
-    const normalized = comment.toLowerCase();
-    return (
-      normalized.includes("sign error") ||
-      normalized.includes("double-check") ||
-      normalized.includes("incorrect arrow") ||
-      normalized.includes("incorrect label") ||
-      normalized.includes("wrong label") ||
-      normalized.includes("wrong sign") ||
-      ((normalized.includes("arrow") || normalized.includes("label")) &&
-        (normalized.includes("incorrect") || normalized.includes("missing") || normalized.includes("not ")))
-    );
-  });
-
-  return hasNegativeArrowFeedback ? "incorrectly labelled arrows" : "correctly labelled arrows";
 }
 
-export async function analyzeStudentWork(question, imageBase64) {
+function isDeltaHLabel(label) {
+  const normalized = normalizeComparableChemistryText(label);
+  return normalized === "δh" || normalized === "î´h" || normalized === "dh" || normalized === "∆h";
+}
+
+function summarizeArrowLabels(arrowDerivedChecks, targetReaction, lowConfidenceExtraction) {
+  if (arrowDerivedChecks.length === 0) {
+    return "uncertain";
+  }
+
+  let hasUncertain = false;
+
+  for (const entry of arrowDerivedChecks) {
+    if (entry.labelStatus === "missing" || entry.hasCompleteLabel === false) {
+      return lowConfidenceExtraction ? "uncertain" : "incorrect";
+    }
+
+    if (entry.labelStatus === "incorrect") {
+      if (isTargetReactionArrow(entry, targetReaction) && isDeltaHLabel(entry.arrowLabel)) {
+        continue;
+      }
+
+      return lowConfidenceExtraction ? "uncertain" : "incorrect";
+    }
+
+    if (entry.labelStatus === "correct") {
+      continue;
+    }
+
+    if (isTargetReactionArrow(entry, targetReaction) && isDeltaHLabel(entry.arrowLabel)) {
+      continue;
+    }
+
+    hasUncertain = true;
+  }
+
+  return hasUncertain ? "uncertain" : "correct";
+}
+
+export async function analyzeStudentWork(question, imageBase64, analysisImages = []) {
   if (!question || !imageBase64) {
     throw new Error("Question and image are required.");
   }
@@ -659,6 +751,8 @@ export async function analyzeStudentWork(question, imageBase64) {
   const prompt = `
     You are an expert Chemistry Teacher specializing in Thermodynamics and Hess's Law.
     You must separate what is visibly written from what you infer.
+    You are given multiple images of the SAME submission. Later images may be sharper crops of the full whiteboard.
+    Use all images together and prefer the clearest crop when handwriting is small.
 
     A student has submitted a handwritten diagram (energy cycle or energy level diagram) in response to the following question:
 
@@ -696,6 +790,7 @@ export async function analyzeStudentWork(question, imageBase64) {
 
     EXTRACTION RULES:
     - Transcribe text exactly as written. Do not silently correct chemistry, coefficients, species, or state symbols.
+    - State symbols matter. Preserve every visible (s), (l), (g), or (aq) exactly when you can see it.
     - If a token is unclear, preserve the visible text as closely as possible and mention the uncertainty in extractionNotes.
     - Do not replace a handwritten coefficient with the chemically correct one just because it seems intended.
     - Put only complete reaction equations with an explicit reaction arrow into extractedEquations.
@@ -726,22 +821,26 @@ export async function analyzeStudentWork(question, imageBase64) {
     Remember: the goal is to reconstruct the equations represented by the Hess-cycle arrows.
   `;
 
-  const cleanBase64 = imageBase64.includes(",")
-    ? imageBase64.split(",")[1]
-    : imageBase64;
+  const normalizedImages = Array.isArray(analysisImages) && analysisImages.length > 0
+    ? analysisImages
+    : [imageBase64];
+  const imageParts = normalizedImages
+    .filter((entry) => typeof entry === "string" && entry.trim())
+    .map((entry) => (entry.includes(",") ? entry.split(",")[1] : entry))
+    .map((data) => ({
+      inlineData: {
+        mimeType: "image/png",
+        data,
+      },
+    }));
 
   const ai = getGeminiClient();
   const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash",
+    model: getGeminiModel(),
     contents: {
       parts: [
+        ...imageParts,
         { text: prompt },
-        {
-          inlineData: {
-            mimeType: "image/png",
-            data: cleanBase64,
-          },
-        },
       ],
     },
     config: {
@@ -784,6 +883,14 @@ export async function analyzeStudentWork(question, imageBase64) {
   const energyCycleStatus = normalizeBinaryStatus(parsedResponse.energyCycleStatus);
   const hessLawStatus = normalizeTernaryStatus(parsedResponse.hessLawStatus);
   const deltaHCalculationStatus = normalizeTernaryStatus(parsedResponse.deltaHCalculationStatus);
+  const { targetReaction } = getQuestionReferenceNodes(question);
+  const stateSymbolEvaluation = evaluateStateSymbols(
+    question,
+    extractedEquations,
+    extractedNodeLabels,
+    arrowConnections,
+    lowConfidenceExtraction,
+  );
   const comments = modelComments
     .filter((comment) => !isModelArrowLabelComment(comment))
     .filter((comment) => !isEnthalpyPraiseComment(comment))
@@ -801,31 +908,45 @@ export async function analyzeStudentWork(question, imageBase64) {
     comments.unshift("Extraction check: low-confidence handwriting extraction detected, so balance penalties were suppressed.");
   }
 
-  if (energyCycleStatus === "complete") {
-    comments.unshift("complete energy cycle");
-  } else if (energyCycleStatus === "incomplete") {
-    comments.unshift("incomplete energy cycle");
-  }
-
   const arrowDerivedChecks = reconstructedEquationChecks.filter((entry) => entry.source !== "explicit");
-  const arrowLabelStatus = getArrowLabelStatus(modelComments, arrowDerivedChecks);
-  if (arrowLabelStatus) {
-    comments.push(arrowLabelStatus);
+  const arrowLabelStatus = summarizeArrowLabels(arrowDerivedChecks, targetReaction, lowConfidenceExtraction);
+  const cycleStructureSummary = energyCycleStatus
+    ? (lowConfidenceExtraction && energyCycleStatus === "incomplete" ? "uncertain" : energyCycleStatus)
+    : "uncertain";
+  const hessLawSummary = normalizeSummaryStatus(hessLawStatus);
+  const finalDeltaHSummary = normalizeSummaryStatus(deltaHCalculationStatus);
+
+  if (cycleStructureSummary === "incomplete") {
+    comments.unshift("Cycle structure check: the extracted cycle appears incomplete.");
+  } else if (cycleStructureSummary === "uncertain") {
+    comments.unshift("Cycle structure check: the cycle structure could not be confirmed confidently from the extracted handwriting.");
   }
 
-  if (hessLawStatus === "correct") {
+  if (stateSymbolEvaluation.status === "incorrect") {
+    comments.push(`State symbol check: missing or unreadable state symbols for ${stateSymbolEvaluation.missingStateSpecies.join(", ")}.`);
+  } else if (stateSymbolEvaluation.status === "uncertain") {
+    comments.push("State symbol check: state symbols could not be verified confidently from the extracted handwriting.");
+  }
+
+  if (arrowLabelStatus === "incorrect") {
+    comments.push("Arrow label check: one or more arrow labels are missing or inconsistent with the reference values.");
+  } else if (arrowLabelStatus === "uncertain") {
+    comments.push("Arrow label check: some arrow labels could not be verified confidently from the extracted handwriting.");
+  }
+
+  if (hessLawSummary === "correct") {
     comments.push("correct application of Hess's Law");
-  } else if (hessLawStatus === "incorrect") {
+  } else if (hessLawSummary === "incorrect") {
     comments.push("incorrect application of Hess's Law");
-  } else if (hessLawStatus === "missing") {
+  } else if (hessLawSummary === "missing") {
     comments.push("missing application of Hess's Law");
   }
 
-  if (deltaHCalculationStatus === "correct") {
+  if (finalDeltaHSummary === "correct") {
     comments.push("correct calculated ΔH value");
-  } else if (deltaHCalculationStatus === "incorrect") {
+  } else if (finalDeltaHSummary === "incorrect") {
     comments.push("incorrect calculated ΔH value");
-  } else if (deltaHCalculationStatus === "missing") {
+  } else if (finalDeltaHSummary === "missing") {
     comments.push("missing calculated ΔH value");
   }
 
@@ -843,6 +964,17 @@ export async function analyzeStudentWork(question, imageBase64) {
     score,
     comments,
     hessLawApplication,
+    summary: {
+      cycleStructure: cycleStructureSummary,
+      stateSymbols: stateSymbolEvaluation.status,
+      arrowLabels: arrowLabelStatus,
+      hessLaw: hessLawSummary,
+      finalDeltaH: finalDeltaHSummary,
+    },
+    diagnostics: {
+      missingStateSpecies: stateSymbolEvaluation.missingStateSpecies,
+      stateEvidenceSpecies: stateSymbolEvaluation.stateEvidenceSpecies,
+    },
     extractedEquations,
     extractedNodeLabels,
     arrowConnections,

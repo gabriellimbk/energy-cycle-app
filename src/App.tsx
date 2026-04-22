@@ -121,6 +121,21 @@ function isNegativeComment(comment: string): boolean {
   );
 }
 
+function statusTone(status: string) {
+  if (status === 'correct' || status === 'complete') return 'positive';
+  if (status === 'incorrect' || status === 'incomplete' || status === 'missing') return 'negative';
+  return 'neutral';
+}
+
+function statusLabel(status: string) {
+  if (status === 'correct') return 'Correct';
+  if (status === 'incorrect') return 'Incorrect';
+  if (status === 'missing') return 'Missing';
+  if (status === 'complete') return 'Complete';
+  if (status === 'incomplete') return 'Incomplete';
+  return 'Uncertain';
+}
+
 export default function App() {
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [isChecking, setIsChecking] = useState(false);
@@ -207,6 +222,7 @@ export default function App() {
     if (!canvasRef.current) return;
     
     const imageData = canvasRef.current.getImageData();
+    const analysisImages = canvasRef.current.getAnalysisImages();
     if (!imageData || imageData.length < 1000) {
       setError("Please draw your answer before checking.");
       return;
@@ -217,7 +233,7 @@ export default function App() {
     setFeedback(null);
 
     try {
-      const result = await checkStudentWork(currentQuestion, imageData);
+      const result = await checkStudentWork(currentQuestion, imageData, analysisImages);
       setFeedback(result);
       setUnlockedSuggestedAnswers((previous) => ({
         ...previous,
@@ -234,6 +250,13 @@ export default function App() {
   const visibleReferenceRows = currentQuestion.data.table.filter(
     (row) => row.value !== undefined || row.equation !== undefined
   );
+  const summaryItems = feedback ? [
+    { label: 'Energy cycle structure', status: feedback.summary.cycleStructure },
+    { label: 'State symbols', status: feedback.summary.stateSymbols },
+    { label: 'Arrow labels', status: feedback.summary.arrowLabels },
+    { label: "Hess's Law calculation", status: feedback.summary.hessLaw },
+    { label: 'Final ΔH value', status: feedback.summary.finalDeltaH },
+  ] : [];
 
   return (
     <div className="app-shell min-h-screen bg-natural-bg text-natural-ink font-sans">
@@ -576,13 +599,45 @@ export default function App() {
                       )}
                     </div>
 
+                    <div className="pt-4 border-t border-natural-border/50 space-y-3">
+                      {summaryItems.map((item) => {
+                        const tone = statusTone(item.status);
+                        return (
+                          <div key={item.label} className="flex gap-3 items-center">
+                            {tone === 'positive' ? (
+                              <CheckCircle2 className="flex-shrink-0 text-natural-green" size={20} />
+                            ) : tone === 'negative' ? (
+                              <XCircle className="flex-shrink-0 text-red-700" size={20} />
+                            ) : (
+                              <Info className="flex-shrink-0 text-amber-700" size={20} />
+                            )}
+                            <div className="min-w-0">
+                              <p className="text-[13px] font-medium text-natural-ink">{item.label}</p>
+                              <p className="text-[11px] uppercase tracking-widest text-natural-muted">{statusLabel(item.status)}</p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {feedback.diagnostics.missingStateSpecies.length > 0 && (
+                      <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+                        <div className="text-[10px] font-black uppercase tracking-widest text-red-700 mb-1">
+                          State Symbol Gaps
+                        </div>
+                        <p className="text-[11px] leading-relaxed text-red-800">
+                          {feedback.diagnostics.missingStateSpecies.join(', ')}
+                        </p>
+                      </div>
+                    )}
+
                     <div className="pt-4 border-t border-natural-border/50 space-y-2">
                       {feedback.comments.map((comment, i) => (
                         <div key={i} className="flex gap-3 items-center">
                           {isNegativeComment(comment) ? (
-                            <XCircle className="flex-shrink-0 text-red-700" size={20} />
+                            <XCircle className="flex-shrink-0 text-red-700" size={18} />
                           ) : (
-                            <CheckCircle2 className="flex-shrink-0 text-natural-green" size={20} />
+                            <Info className="flex-shrink-0 text-amber-700" size={18} />
                           )}
                           <p className="text-[13px] text-natural-ink">{shortenComment(comment)}</p>
                         </div>
