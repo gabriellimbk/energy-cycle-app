@@ -620,6 +620,32 @@ function mergeDirectionalArrowEntries(entries) {
   });
 }
 
+function hasOppositeDirections(entries) {
+  const directionsByPair = new Map();
+
+  for (const entry of entries) {
+    const fromComparable = normalizeComparableChemistryText(entry.fromNode);
+    const toComparable = normalizeComparableChemistryText(entry.toNode);
+    if (!fromComparable || !toComparable || fromComparable === toComparable) {
+      continue;
+    }
+
+    const pairKey = [fromComparable, toComparable].sort().join("<->");
+    const directionKey = `${fromComparable}=>${toComparable}`;
+    const existing = directionsByPair.get(pairKey) || new Set();
+    existing.add(directionKey);
+    directionsByPair.set(pairKey, existing);
+  }
+
+  for (const directions of directionsByPair.values()) {
+    if (directions.size > 1) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function reconstructArrowEquations(question, extractedEquations, extractedNodeLabels, arrowConnections) {
   const { nodes: referenceNodes, targetReaction } = getQuestionReferenceNodes(question);
   const reconstructedFromArrows = arrowConnections.map((connection) => ({
@@ -765,9 +791,13 @@ function isDeltaHLabel(label) {
   return normalized === "δh" || normalized === "î´h" || normalized === "dh" || normalized === "∆h";
 }
 
-function summarizeArrowLabels(arrowDerivedChecks, targetReaction, lowConfidenceExtraction) {
+function summarizeArrowLabels(arrowDerivedChecks, targetReaction, lowConfidenceExtraction, oppositeDirectionDetected = false) {
   if (arrowDerivedChecks.length === 0) {
     return "uncertain";
+  }
+
+  if (oppositeDirectionDetected) {
+    return lowConfidenceExtraction ? "uncertain" : "incorrect";
   }
 
   let hasUncertain = false;
@@ -914,6 +944,7 @@ export async function analyzeStudentWork(question, imageBase64, analysisImages =
   const extractedEquations = normalizeStringArray(parsedResponse.extractedEquations);
   const extractedNodeLabels = normalizeStringArray(parsedResponse.extractedNodeLabels);
   const arrowConnections = normalizeArrowConnections(parsedResponse.arrowConnections);
+  const oppositeDirectionDetected = hasOppositeDirections(arrowConnections);
   const extractionNotes = normalizeStringArray(parsedResponse.extractionNotes);
   const reconstructedEquations = reconstructArrowEquations(question, extractedEquations, extractedNodeLabels, arrowConnections);
   const reconstructedEquationChecks = validateExtractedEquations(reconstructedEquations.map((entry) => entry.equation))
@@ -966,7 +997,7 @@ export async function analyzeStudentWork(question, imageBase64, analysisImages =
   }
 
   const arrowDerivedChecks = reconstructedEquationChecks.filter((entry) => entry.source !== "explicit");
-  const arrowLabelStatus = summarizeArrowLabels(arrowDerivedChecks, targetReaction, lowConfidenceExtraction);
+  const arrowLabelStatus = summarizeArrowLabels(arrowDerivedChecks, targetReaction, lowConfidenceExtraction, oppositeDirectionDetected);
   const cycleStructureSummary = energyCycleStatus
     ? (lowConfidenceExtraction && energyCycleStatus === "incomplete" ? "uncertain" : energyCycleStatus)
     : "uncertain";
