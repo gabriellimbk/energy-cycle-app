@@ -676,31 +676,10 @@ function reconstructArrowEquations(question, extractedEquations, extractedNodeLa
 
   if (reconstructedFromArrows.length > 0) {
     const snappedEntries = reconstructedFromArrows.map((entry) => {
-      const normalizedLabel = normalizeComparableChemistryText(entry.label);
-
-      if (
-        targetReaction &&
-        (normalizedLabel.includes("δh") || normalizedLabel.includes("dh") || normalizedLabel.includes("h"))
-      ) {
-        return {
-          ...entry,
-          fromNode: targetReaction.left,
-          toNode: targetReaction.right,
-          equation: `${targetReaction.left} -> ${targetReaction.right}`,
-        };
-      }
-
-      let fromNode = snapToReferenceNode(entry.fromNode, referenceNodes);
-      let toNode = snapToReferenceNode(entry.toNode, referenceNodes);
-
+      const fromNode = snapToReferenceNode(entry.fromNode, referenceNodes);
+      const toNode = snapToReferenceNode(entry.toNode, referenceNodes);
       const equation = `${fromNode} -> ${toNode}`;
-
-      return {
-        ...entry,
-        fromNode,
-        toNode,
-        equation,
-      };
+      return { ...entry, fromNode, toNode, equation };
     });
 
     const mergedEntries = mergeDirectionalArrowEntries(snappedEntries);
@@ -881,19 +860,16 @@ function summarizeArrowLabels(arrowDerivedChecks, targetReaction, lowConfidenceE
       return lowConfidenceExtraction ? "uncertain" : "incorrect";
     }
 
-    if (entry.labelStatus === "incorrect") {
-      if (isTargetReactionArrow(entry, targetReaction) && isDeltaHLabel(entry.arrowLabel)) {
-        continue;
-      }
+    // ΔH-labelled arrows represent the overall reaction — skip label scoring for them
+    if (isDeltaHLabel(entry.arrowLabel)) {
+      continue;
+    }
 
+    if (entry.labelStatus === "incorrect") {
       return lowConfidenceExtraction ? "uncertain" : "incorrect";
     }
 
     if (entry.labelStatus === "correct") {
-      continue;
-    }
-
-    if (isTargetReactionArrow(entry, targetReaction) && isDeltaHLabel(entry.arrowLabel)) {
       continue;
     }
 
@@ -1306,7 +1282,9 @@ export async function analyzeStudentWork(question, imageBase64, analysisImages =
   const deltaHCalculationStatus = normalizeTernaryStatus(parsedResponse.deltaHCalculationStatus);
   const targetReaction = questionTargetReaction;
   const targetReactionFromActualArrow = reconstructedEquations.some(
-    (entry) => entry.source === "arrow" && isTargetReactionArrow(entry, targetReaction)
+    (entry) => entry.source === "arrow" && (
+      isTargetReactionArrow(entry, targetReaction) || isDeltaHLabel(entry.label)
+    )
   );
   const energyCycleStatus = targetReactionFromActualArrow
     ? rawEnergyCycleStatus || "incomplete"
