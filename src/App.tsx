@@ -252,6 +252,7 @@ export default function App() {
   );
   const summaryItems = feedback ? [
     { label: 'Energy cycle structure', status: feedback.summary.cycleStructure },
+    { label: 'All equations balanced', status: feedback.summary.allEquationsBalanced },
     { label: 'State symbols', status: feedback.summary.stateSymbols },
     { label: 'Arrow labels / direction', status: feedback.summary.arrowLabelsAndDirection },
     { label: "Hess's Law calculation", status: feedback.summary.hessLaw },

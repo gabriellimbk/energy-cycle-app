@@ -1001,6 +1001,9 @@ export async function analyzeStudentWork(question, imageBase64, analysisImages =
   const cycleStructureSummary = energyCycleStatus
     ? (lowConfidenceExtraction && energyCycleStatus === "incomplete" ? "uncertain" : energyCycleStatus)
     : "uncertain";
+  const equationsBalancedSummary = lowConfidenceExtraction
+    ? "uncertain"
+    : (unbalancedEquations.length > 0 ? "incorrect" : "correct");
   const hessLawSummary = normalizeSummaryStatus(hessLawStatus);
   const finalDeltaHSummary = normalizeSummaryStatus(deltaHCalculationStatus);
 
@@ -1054,6 +1057,7 @@ export async function analyzeStudentWork(question, imageBase64, analysisImages =
     hessLawApplication,
     summary: {
       cycleStructure: cycleStructureSummary,
+      allEquationsBalanced: equationsBalancedSummary,
       stateSymbols: stateSymbolEvaluation.status,
       arrowLabelsAndDirection: arrowLabelStatus,
       hessLaw: hessLawSummary,

@@ -21,6 +21,7 @@ export interface Feedback {
   hessLawApplication: string;
   summary: {
     cycleStructure: "complete" | "incomplete" | "uncertain";
+    allEquationsBalanced: "correct" | "incorrect" | "uncertain";
     stateSymbols: "correct" | "incorrect" | "uncertain";
     arrowLabelsAndDirection: "correct" | "incorrect" | "uncertain";
     hessLaw: "correct" | "incorrect" | "missing" | "uncertain";
