@@ -1054,6 +1054,84 @@ function overrideLabelStatusFromReferenceData(arrowConnections, question) {
   });
 }
 
+function isBondEnergyQuestion(question) {
+  return (question?.data?.table || []).some(
+    (row) => typeof row.enthalpy === "string" && row.enthalpy.toLowerCase().includes("bond energy")
+  );
+}
+
+function findAtomsIntermediateNode(arrowConnections, targetReaction) {
+  if (!targetReaction) {
+    return null;
+  }
+
+  const leftComp = normalizeComparableChemistryText(targetReaction.left);
+  const rightComp = normalizeComparableChemistryText(targetReaction.right);
+
+  for (const conn of arrowConnections) {
+    const fromComp = normalizeComparableChemistryText(conn.fromNode);
+    const toComp = normalizeComparableChemistryText(conn.toNode);
+    if (fromComp !== leftComp && fromComp !== rightComp && fromComp) {
+      return conn.fromNode;
+    }
+    if (toComp !== leftComp && toComp !== rightComp && toComp) {
+      return conn.toNode;
+    }
+  }
+
+  return null;
+}
+
+function getLabelNetSign(label) {
+  const str = String(label).replace(/\s+/g, "");
+  // Negative if starts with minus, or if any parenthesised value is negative: (-NNN)
+  if (/^-/.test(str) || /\(-\d/.test(str)) {
+    return "negative";
+  }
+  return "positive";
+}
+
+function validateBondEnergyLabelSigns(arrowConnections, question, targetReaction) {
+  if (!isBondEnergyQuestion(question)) {
+    return arrowConnections;
+  }
+
+  const atomsNode = findAtomsIntermediateNode(arrowConnections, targetReaction);
+  if (!atomsNode) {
+    return arrowConnections;
+  }
+
+  const atomsComp = normalizeComparableChemistryText(atomsNode);
+
+  return arrowConnections.map((conn) => {
+    if (conn.labelStatus !== "correct") {
+      return conn;
+    }
+    if (isMissingLabel(conn.label)) {
+      return conn;
+    }
+
+    const fromComp = normalizeComparableChemistryText(conn.fromNode);
+    const toComp = normalizeComparableChemistryText(conn.toNode);
+    const isBondBreaking = toComp === atomsComp;   // molecules → atoms: label must be positive
+    const isBondForming = fromComp === atomsComp;  // atoms → molecules: label must be negative
+
+    if (!isBondBreaking && !isBondForming) {
+      return conn;
+    }
+
+    const sign = getLabelNetSign(conn.label);
+    if (isBondBreaking && sign === "negative") {
+      return { ...conn, labelStatus: "incorrect" };
+    }
+    if (isBondForming && sign === "positive") {
+      return { ...conn, labelStatus: "incorrect" };
+    }
+
+    return conn;
+  });
+}
+
 export async function analyzeStudentWork(question, imageBase64, analysisImages = []) {
   if (!question || !imageBase64) {
     throw new Error("Question and image are required.");
@@ -1112,7 +1190,7 @@ export async function analyzeStudentWork(question, imageBase64, analysisImages =
     - If two arrows have the same start node, the same end node, and the same direction, treat them as one combined reaction step and combine their labels mathematically.
     - If two arrows connect the same pair of nodes but point in opposite directions, treat that as a direction inconsistency rather than a valid combined label.
     - Do not infer arrow direction from chemistry; use only the visible arrowhead. If the arrowhead is unclear, keep the most literal reading and mention the uncertainty in extractionNotes.
-    - Treat the long target reaction written across the top as a standalone equation unless it is clearly one of the drawn cycle arrows.
+    - If a drawn arrow (with a visible arrowhead) connects the reactant node to the product node — even if it is labeled only "ΔH" — record it as an arrowConnection. Do NOT treat it as a standalone annotation or put it in extractedEquations. Only put the target reaction in extractedEquations if there is no drawn arrow at all connecting those two nodes.
     - Treat floating combustion notes, added O2 terms, or small annotations written above or below a node as separate notes, not as part of that node.
     - Do not merge a nearby note into fromNode or toNode unless it is clearly written inline on the same baseline as the node text.
     - Treat floating combustion notes, added O2 terms, or small annotations written above or below a node as separate notes, not as part of that node.
@@ -1167,14 +1245,19 @@ export async function analyzeStudentWork(question, imageBase64, analysisImages =
   }
 
   const parsedResponse = JSON.parse(response.text);
+  const { targetReaction: questionTargetReaction } = getQuestionReferenceNodes(question);
   const extractedEquations = normalizeStringArray(parsedResponse.extractedEquations);
   const extractedNodeLabels = normalizeStringArray(parsedResponse.extractedNodeLabels);
-  const arrowConnections = validateLabelStoichiometry(
-    overrideLabelStatusFromReferenceData(
-      normalizeArrowConnections(parsedResponse.arrowConnections),
+  const arrowConnections = validateBondEnergyLabelSigns(
+    validateLabelStoichiometry(
+      overrideLabelStatusFromReferenceData(
+        normalizeArrowConnections(parsedResponse.arrowConnections),
+        question,
+      ),
       question,
     ),
     question,
+    questionTargetReaction,
   );
   const oppositeDirectionDetected = hasOppositeDirections(arrowConnections);
   const extractionNotes = normalizeStringArray(parsedResponse.extractionNotes).filter(
@@ -1205,7 +1288,7 @@ export async function analyzeStudentWork(question, imageBase64, analysisImages =
   const rawEnergyCycleStatus = normalizeBinaryStatus(parsedResponse.energyCycleStatus);
   const hessLawStatus = normalizeTernaryStatus(parsedResponse.hessLawStatus);
   const deltaHCalculationStatus = normalizeTernaryStatus(parsedResponse.deltaHCalculationStatus);
-  const { targetReaction } = getQuestionReferenceNodes(question);
+  const targetReaction = questionTargetReaction;
   const targetReactionFromActualArrow = reconstructedEquations.some(
     (entry) => entry.source === "arrow" && isTargetReactionArrow(entry, targetReaction)
   );
