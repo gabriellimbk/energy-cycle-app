@@ -621,6 +621,16 @@ export default function App() {
                                 {entry.issue}
                               </p>
                             )}
+                            {entry.missingStateSpecies && entry.missingStateSpecies.length > 0 && (
+                              <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                                <span className="text-[10px] font-black uppercase tracking-widest text-red-600">
+                                  Missing state symbol:
+                                </span>
+                                <span className="text-[11px] font-mono text-red-700">
+                                  {entry.missingStateSpecies.join(', ')}
+                                </span>
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>

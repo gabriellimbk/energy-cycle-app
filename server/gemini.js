@@ -662,6 +662,20 @@ function hasOppositeDirections(entries) {
   return false;
 }
 
+function collectMissingStateSpeciesFromNodes(...nodeTexts) {
+  const missing = [];
+  const seen = new Set();
+  for (const nodeText of nodeTexts) {
+    for (const species of collectSpeciesFromText(nodeText)) {
+      if (!species.hasStateSymbol && !seen.has(species.normalizedFormula)) {
+        seen.add(species.normalizedFormula);
+        missing.push(species.formula);
+      }
+    }
+  }
+  return missing;
+}
+
 function reconstructArrowEquations(question, extractedEquations, extractedNodeLabels, arrowConnections) {
   const { nodes: referenceNodes, targetReaction } = getQuestionReferenceNodes(question);
   const reconstructedFromArrows = arrowConnections.map((connection) => ({
@@ -672,6 +686,7 @@ function reconstructArrowEquations(question, extractedEquations, extractedNodeLa
     source: "arrow",
     hasCompleteLabel: !isMissingLabel(connection.label),
     labelStatus: connection.labelStatus || "",
+    missingStateSpecies: collectMissingStateSpeciesFromNodes(connection.fromNode, connection.toNode),
   }));
 
   if (reconstructedFromArrows.length > 0) {
@@ -1067,14 +1082,23 @@ function findAtomsIntermediateNode(arrowConnections, targetReaction) {
 
   const leftComp = normalizeComparableChemistryText(targetReaction.left);
   const rightComp = normalizeComparableChemistryText(targetReaction.right);
+  const leftStripped = normalizeForStateStripSnap(leftComp);
+  const rightStripped = normalizeForStateStripSnap(rightComp);
+
+  const matchesTarget = (comp) => {
+    if (!comp) return false;
+    if (comp === leftComp || comp === rightComp) return true;
+    const stripped = normalizeForStateStripSnap(comp);
+    return Boolean(stripped) && (stripped === leftStripped || stripped === rightStripped);
+  };
 
   for (const conn of arrowConnections) {
     const fromComp = normalizeComparableChemistryText(conn.fromNode);
     const toComp = normalizeComparableChemistryText(conn.toNode);
-    if (fromComp !== leftComp && fromComp !== rightComp && fromComp) {
+    if (fromComp && !matchesTarget(fromComp)) {
       return conn.fromNode;
     }
-    if (toComp !== leftComp && toComp !== rightComp && toComp) {
+    if (toComp && !matchesTarget(toComp)) {
       return conn.toNode;
     }
   }
@@ -1102,6 +1126,14 @@ function validateBondEnergyLabelSigns(arrowConnections, question, targetReaction
   }
 
   const atomsComp = normalizeComparableChemistryText(atomsNode);
+  const atomsStripped = normalizeForStateStripSnap(atomsComp);
+
+  const matchesAtoms = (comp) => {
+    if (!comp) return false;
+    if (comp === atomsComp) return true;
+    const stripped = normalizeForStateStripSnap(comp);
+    return Boolean(stripped) && stripped === atomsStripped;
+  };
 
   return arrowConnections.map((conn) => {
     if (conn.labelStatus !== "correct") {
@@ -1113,8 +1145,8 @@ function validateBondEnergyLabelSigns(arrowConnections, question, targetReaction
 
     const fromComp = normalizeComparableChemistryText(conn.fromNode);
     const toComp = normalizeComparableChemistryText(conn.toNode);
-    const isBondBreaking = toComp === atomsComp;   // molecules → atoms: label must be positive
-    const isBondForming = fromComp === atomsComp;  // atoms → molecules: label must be negative
+    const isBondBreaking = matchesAtoms(toComp);   // molecules → atoms: label must be positive
+    const isBondForming = matchesAtoms(fromComp);  // atoms → molecules: label must be negative
 
     if (!isBondBreaking && !isBondForming) {
       return conn;
@@ -1273,6 +1305,7 @@ export async function analyzeStudentWork(question, imageBase64, analysisImages =
       source: reconstructedEquations[index]?.source || "explicit",
       hasCompleteLabel: reconstructedEquations[index]?.hasCompleteLabel ?? null,
       labelStatus: reconstructedEquations[index]?.labelStatus || "",
+      missingStateSpecies: reconstructedEquations[index]?.missingStateSpecies || [],
     }));
 
   const unbalancedEquations = reconstructedEquationChecks.filter((entry) => entry.status === "unbalanced");
