@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { collectSpeciesFromText, collectSpeciesFromTexts, maskCharges, normalizeEquationText, unmaskCharges, validateExtractedEquations } from "./chemistryValidation.js";
+import { collectSpeciesFromText, collectSpeciesFromTexts, maskCharges, normalizeEquationText, stripStandaloneAqueousContext, unmaskCharges, validateExtractedEquations } from "./chemistryValidation.js";
 
 const ARROW_CONNECTION_SCHEMA = {
   type: Type.OBJECT,
@@ -255,7 +255,7 @@ function normalizeComparableChemistryText(value) {
     return "";
   }
 
-  return normalizeEquationText(value)
+  return stripStandaloneAqueousContext(value)
     .toLowerCase()
     .replace(/\s+/g, "")
     .replace(/[â†’→]/g, "->")
@@ -332,7 +332,7 @@ function splitReactionSides(reaction) {
     return null;
   }
 
-  const sides = reaction.split(/\s*(?:->|\u2192|\u27F6|\u27F9|=>|=)\s*/);
+  const sides = stripStandaloneAqueousContext(reaction).split(/\s*(?:->|\u2192|\u27F6|\u27F9|=>|=)\s*/);
   if (sides.length !== 2) {
     return null;
   }
@@ -392,7 +392,7 @@ function normalizeForStateStripSnap(comparable) {
   // Normalize Unicode subscripts to ASCII then strip state symbols.
   // Used to snap node text that differs from the reference only by state symbols.
   const subscriptMap = {"₀":"0","₁":"1","₂":"2","₃":"3","₄":"4","₅":"5","₆":"6","₇":"7","₈":"8","₉":"9"};
-  return normalizeEquationText(Array.from(comparable)
+  return stripStandaloneAqueousContext(Array.from(comparable)
     .map((c) => subscriptMap[c] ?? c)
     .join(""))
     .replace(/\((?:s|l|g|aq)\)/gi, "")

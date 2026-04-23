@@ -117,6 +117,10 @@ export function collectSpeciesFromText(value) {
     .map((segment) => unmaskCharges(segment).trim())
     .filter(Boolean)
     .map((segment) => {
+      if (isAqueousContextToken(segment)) {
+        return null;
+      }
+
       const formula = normalizeSpeciesFormula(segment);
       if (!formula) {
         return null;
@@ -134,6 +138,31 @@ export function collectSpeciesFromText(value) {
 
 export function collectSpeciesFromTexts(values = []) {
   return values.flatMap((value) => collectSpeciesFromText(value));
+}
+
+export function stripStandaloneAqueousContext(value) {
+  const normalized = normalizeEquationText(value);
+  if (!normalized) {
+    return "";
+  }
+
+  return maskCharges(normalized)
+    .split(/(\s*(?:->|\u2192|\u27F6|\u27F9|=>|=)\s*)/)
+    .map((part, index) => {
+      if (index % 2 === 1) {
+        return unmaskCharges(part);
+      }
+
+      return part
+        .split("+")
+        .map((segment) => unmaskCharges(segment).trim())
+        .filter((segment) => segment && !isAqueousContextToken(segment))
+        .join(" + ");
+    })
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .replace(/\s+(?:->|\u2192|\u27F6|\u27F9|=>|=)\s+/g, " -> ")
+    .trim();
 }
 
 function isAqueousContextToken(value) {
