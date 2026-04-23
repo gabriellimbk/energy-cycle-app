@@ -220,12 +220,42 @@ function sanitizeNodeLabel(value) {
     .trim();
 }
 
+function getExplicitStateMap(text) {
+  const states = new Map();
+
+  for (const species of collectSpeciesFromText(text)) {
+    const match = normalizeEquationText(species.text).match(/\((s|l|g|aq)\)\s*$/i);
+    if (match) {
+      states.set(species.normalizedFormula, match[1].toLowerCase());
+    }
+  }
+
+  return states;
+}
+
+function hasSharedExplicitStateConflict(observedText, candidateText) {
+  const observedStates = getExplicitStateMap(observedText);
+  if (observedStates.size === 0) {
+    return false;
+  }
+
+  const candidateStates = getExplicitStateMap(candidateText);
+  for (const [formula, observedState] of observedStates.entries()) {
+    const candidateState = candidateStates.get(formula);
+    if (candidateState && candidateState !== observedState) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function normalizeComparableChemistryText(value) {
   if (typeof value !== "string") {
     return "";
   }
 
-  return value
+  return normalizeEquationText(value)
     .toLowerCase()
     .replace(/\s+/g, "")
     .replace(/[â†’→]/g, "->")
@@ -362,9 +392,9 @@ function normalizeForStateStripSnap(comparable) {
   // Normalize Unicode subscripts to ASCII then strip state symbols.
   // Used to snap node text that differs from the reference only by state symbols.
   const subscriptMap = {"₀":"0","₁":"1","₂":"2","₃":"3","₄":"4","₅":"5","₆":"6","₇":"7","₈":"8","₉":"9"};
-  return Array.from(comparable)
+  return normalizeEquationText(Array.from(comparable)
     .map((c) => subscriptMap[c] ?? c)
-    .join("")
+    .join(""))
     .replace(/\((?:s|l|g|aq)\)/gi, "")
     .replace(/\s+/g, "");
 }
@@ -376,23 +406,38 @@ function snapToReferenceNode(value, referenceNodes) {
     return sanitized;
   }
 
+  const exactMatches = [];
+  const strippedMatches = [];
+  const strippedComparable = normalizeForStateStripSnap(comparable);
+
   for (const candidate of referenceNodes) {
     const candidateComparable = normalizeComparableChemistryText(candidate);
     if (!candidateComparable) {
       continue;
     }
 
-    // Exact match after standard normalization
     if (comparable === candidateComparable) {
-      return candidate;
+      exactMatches.push(candidate);
+      continue;
     }
 
-    // Match when the only difference is state symbols (e.g. student omitted "(g)")
-    const strippedComparable = normalizeForStateStripSnap(comparable);
     const strippedCandidateComparable = normalizeForStateStripSnap(candidateComparable);
-    if (strippedComparable && strippedCandidateComparable && strippedComparable === strippedCandidateComparable) {
-      return candidate;
+    if (
+      strippedComparable &&
+      strippedCandidateComparable &&
+      strippedComparable === strippedCandidateComparable &&
+      !hasSharedExplicitStateConflict(sanitized, candidate)
+    ) {
+      strippedMatches.push(candidate);
     }
+  }
+
+  if (exactMatches.length > 0) {
+    return exactMatches[0];
+  }
+
+  if (strippedMatches.length === 1) {
+    return strippedMatches[0];
   }
 
   return sanitized;
@@ -909,13 +954,30 @@ const UNICODE_SUBSCRIPT_TO_ASCII = {
   "₅": "5", "₆": "6", "₇": "7", "₈": "8", "₉": "9",
 };
 
-function normalizeFormulaKey(text) {
-  const asciiText = Array.from(text).map((c) => UNICODE_SUBSCRIPT_TO_ASCII[c] ?? c).join("");
-  return asciiText
+function normalizeFormulaKey(text, { preserveState = false } = {}) {
+  const asciiText = Array.from(normalizeEquationText(String(text ?? ""))).map((c) => UNICODE_SUBSCRIPT_TO_ASCII[c] ?? c).join("");
+  const normalized = asciiText
     .toLowerCase()
     .replace(/\s+/g, "")
-    .replace(/\s*\((?:s|l|g|aq)\)\s*$/i, "")
     .trim();
+
+  return preserveState
+    ? normalized
+    : normalized.replace(/\((?:s|l|g|aq)\)$/i, "");
+}
+
+function hasExplicitSpeciesState(formulaAndState) {
+  return /\((?:s|l|g|aq)\)\s*$/i.test(normalizeEquationText(String(formulaAndState ?? "")));
+}
+
+function parseNodeCoefficient(coeffText) {
+  if (!coeffText) {
+    return 1;
+  }
+
+  return coeffText.includes("/")
+    ? Number(coeffText.split("/")[0]) / Number(coeffText.split("/")[1])
+    : parseFloat(coeffText);
 }
 
 function extractSimpleNumericFromLabel(label) {
@@ -945,16 +1007,19 @@ function extractProductFromReferenceEquation(equationText) {
   }
 
   const [, coeffText, formulaAndState] = match;
-  const coeff = coeffText
-    ? (coeffText.includes("/")
-        ? Number(coeffText.split("/")[0]) / Number(coeffText.split("/")[1])
-        : parseFloat(coeffText))
-    : 1;
+  const coeff = parseNodeCoefficient(coeffText);
 
-  return { formulaKey: normalizeFormulaKey(formulaAndState), coeff };
+  return {
+    formulaKey: normalizeFormulaKey(formulaAndState),
+    exactFormulaKey: normalizeFormulaKey(formulaAndState, { preserveState: true }),
+    coeff,
+  };
 }
 
-function findCoeffInNodeText(nodeText, targetFormulaKey) {
+function findCoeffInNodeText(nodeText, targetProduct) {
+  let fallbackMatch = null;
+  let stateConflictMatch = null;
+
   for (const term of nodeText.split("+").map((s) => s.trim()).filter(Boolean)) {
     const match = term.match(/^(\d+(?:\/\d+)?|\d*\.\d+)?\s*(.+)$/);
     if (!match) {
@@ -962,16 +1027,26 @@ function findCoeffInNodeText(nodeText, targetFormulaKey) {
     }
 
     const [, coeffText, formulaAndState] = match;
-    if (normalizeFormulaKey(formulaAndState) === targetFormulaKey) {
-      return coeffText
-        ? (coeffText.includes("/")
-            ? Number(coeffText.split("/")[0]) / Number(coeffText.split("/")[1])
-            : parseFloat(coeffText))
-        : 1;
+    const coeff = parseNodeCoefficient(coeffText);
+    const exactFormulaKey = normalizeFormulaKey(formulaAndState, { preserveState: true });
+    const formulaKey = normalizeFormulaKey(formulaAndState);
+    if (exactFormulaKey === targetProduct.exactFormulaKey) {
+      return { coeff, matchType: "exact" };
     }
+
+    if (formulaKey !== targetProduct.formulaKey) {
+      continue;
+    }
+
+    if (!hasExplicitSpeciesState(formulaAndState)) {
+      fallbackMatch ||= { coeff, matchType: "state-missing" };
+      continue;
+    }
+
+    stateConflictMatch ||= { coeff, matchType: "state-conflict" };
   }
 
-  return 0;
+  return fallbackMatch || stateConflictMatch || { coeff: 0, matchType: "none" };
 }
 
 function validateLabelStoichiometry(arrowConnections, question) {
@@ -1001,26 +1076,39 @@ function validateLabelStoichiometry(arrowConnections, question) {
         continue;
       }
 
+      const candidateExpectations = [];
+      let sawStateConflict = false;
+
       if (conn.toNode) {
-        const coeff = findCoeffInNodeText(conn.toNode, refProduct.formulaKey);
-        if (coeff >= 1) {
+        const match = findCoeffInNodeText(conn.toNode, refProduct);
+        if (match.matchType === "state-conflict") {
+          sawStateConflict = true;
+        } else if (match.coeff >= 1) {
           const valuePerMole = row.value / refProduct.coeff;
-          const expected = coeff * valuePerMole;
-          if (Math.abs(labelNum - expected) > 0.6) {
-            return { ...conn, labelStatus: "incorrect" };
-          }
+          candidateExpectations.push(match.coeff * valuePerMole);
         }
       }
 
       if (conn.fromNode) {
-        const coeff = findCoeffInNodeText(conn.fromNode, refProduct.formulaKey);
-        if (coeff >= 1) {
+        const match = findCoeffInNodeText(conn.fromNode, refProduct);
+        if (match.matchType === "state-conflict") {
+          sawStateConflict = true;
+        } else if (match.coeff >= 1) {
           const valuePerMole = row.value / refProduct.coeff;
-          const expected = -coeff * valuePerMole;
-          if (Math.abs(labelNum - expected) > 0.6) {
-            return { ...conn, labelStatus: "incorrect" };
-          }
+          candidateExpectations.push(-match.coeff * valuePerMole);
         }
+      }
+
+      if (candidateExpectations.length > 0) {
+        const matchedExpectedValue = candidateExpectations.some((expected) => Math.abs(labelNum - expected) <= 0.6);
+        if (!matchedExpectedValue) {
+          return { ...conn, labelStatus: "incorrect" };
+        }
+        continue;
+      }
+
+      if (sawStateConflict) {
+        return { ...conn, labelStatus: "incorrect" };
       }
     }
 

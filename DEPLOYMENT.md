@@ -16,6 +16,7 @@
 - local logs
 - `.env`
 - `.env.local`
+- `local-config/gemini.env.local`
 
 ## GitHub upload checklist
 

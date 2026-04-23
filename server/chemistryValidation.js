@@ -26,13 +26,42 @@ const SUPERSCRIPT_MAP = {
   "\u207A": "+",
   "\u207B": "-",
 };
+const FRACTION_MAP = {
+  "\u00BC": "1/4",
+  "\u00BD": "1/2",
+  "\u00BE": "3/4",
+  "\u2150": "1/7",
+  "\u2151": "1/9",
+  "\u2152": "1/10",
+  "\u2153": "1/3",
+  "\u2154": "2/3",
+  "\u2155": "1/5",
+  "\u2156": "2/5",
+  "\u2157": "3/5",
+  "\u2158": "4/5",
+  "\u2159": "1/6",
+  "\u215A": "5/6",
+  "\u215B": "1/8",
+  "\u215C": "3/8",
+  "\u215D": "5/8",
+  "\u215E": "7/8",
+};
 
 function replaceMappedCharacters(value, characterMap) {
   return Array.from(value).map((character) => characterMap[character] ?? character).join("");
 }
 
 export function normalizeEquationText(value) {
-  return replaceMappedCharacters(replaceMappedCharacters(value, SUBSCRIPT_MAP), SUPERSCRIPT_MAP)
+  return replaceMappedCharacters(
+    replaceMappedCharacters(
+      replaceMappedCharacters(String(value ?? ""), SUBSCRIPT_MAP),
+      SUPERSCRIPT_MAP
+    ),
+    FRACTION_MAP
+  )
+    .replace(/Â¼/g, "1/4")
+    .replace(/Â½/g, "1/2")
+    .replace(/Â¾/g, "3/4")
     .replace(/[“”]/g, "\"")
     .replace(/[‘’]/g, "'")
     .replace(/\s+/g, " ")

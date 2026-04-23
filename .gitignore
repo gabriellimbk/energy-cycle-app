@@ -10,3 +10,5 @@ coverage/
 .env.production
 .env*
 !.env.example
+local-config/gemini.env.local
+local-config/test-images/

@@ -42,6 +42,17 @@ const decodeChemistryText = (value: string) => {
     .replaceAll('Â²â»', '\u00B2\u207B')
     .replaceAll('Â³âº', '\u00B3\u207A');
 };
+const DISPLAY_FRACTIONS: Array<[string, string]> = [
+  ['7/8', '⅞'],
+  ['5/8', '⅝'],
+  ['3/8', '⅜'],
+  ['1/8', '⅛'],
+  ['3/4', '¾'],
+  ['1/4', '¼'],
+  ['2/3', '⅔'],
+  ['1/3', '⅓'],
+  ['1/2', '½'],
+];
 
 const ChemistryText = ({ children, className = "" }: { children: string; className?: string }) => {
   if (!children) return null;
@@ -85,9 +96,23 @@ const SUPERSCRIPT_DIGITS: Record<string, string> = {
 };
 
 function formatEquationForDisplay(equation: string): string {
-  return equation
+  let formatted = equation
     .replace(/->/g, ' → ')
-    .replace(/\s{2,}/g, ' ')
+    .replace(/\s{2,}/g, ' ');
+  for (const [asciiFraction, prettyFraction] of DISPLAY_FRACTIONS) {
+    const escapedFraction = asciiFraction.replace('/', '\\/');
+    formatted = formatted.replace(
+      new RegExp(`(^|[\\s+(])${escapedFraction}(?=\\s*[A-Za-z(])`, 'g'),
+      `$1${prettyFraction}`
+    );
+  }
+
+  return formatted
+    .replace(/(^|[\s+(])(\d+)\/(\d+)(?=\s*[A-Za-z(])/g, (_, prefix, numerator, denominator) => {
+      const numeratorSup = numerator.split('').map((d: string) => SUPERSCRIPT_DIGITS[d] ?? d).join('');
+      const denominatorSub = denominator.split('').map((d: string) => SUBSCRIPT_DIGITS[d] ?? d).join('');
+      return `${prefix}${numeratorSup}⁄${denominatorSub}`;
+    })
     // Charges first: Mg2+ → Mg²⁺, Cl- → Cl⁻ (so the digit isn't mistaken for a formula subscript).
     .replace(/([A-Za-z)])(\d*)([+\-])(?=\(|\s|$|,|→)/g, (_, prefix, digits, sign) => {
       const digitSup = digits.split('').map((d: string) => SUPERSCRIPT_DIGITS[d] ?? d).join('');
@@ -589,7 +614,7 @@ export default function App() {
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
                                 <div className="text-[12px] font-serif italic text-natural-olive leading-relaxed">
-                                  {formatEquationForDisplay(entry.equation)}
+                                  <ChemistryText>{formatEquationForDisplay(entry.equation)}</ChemistryText>
                                 </div>
                                 {entry.source !== 'explicit' && (
                                   <div className="mt-1 flex items-center gap-1.5 flex-wrap">
@@ -597,7 +622,9 @@ export default function App() {
                                       Label:
                                     </span>
                                     {entry.arrowLabel ? (
-                                      <span className="text-[10px] font-mono text-natural-ink">{entry.arrowLabel}</span>
+                                      <span className="text-[10px] font-mono text-natural-ink">
+                                        <ChemistryText>{entry.arrowLabel}</ChemistryText>
+                                      </span>
                                     ) : null}
                                     {entry.labelStatus === 'missing' || entry.hasCompleteLabel === false ? (
                                       <span className="text-[9px] font-black uppercase tracking-widest text-red-600 bg-red-50 px-1.5 py-0.5 rounded">no label</span>

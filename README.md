@@ -20,9 +20,9 @@ Setup:
 
 1. Install dependencies:
    `npm install`
-2. Create a local env file:
-   `Copy-Item .env.example .env.local`
-3. Add your Gemini key to `.env.local`
+2. Open the local Gemini config file:
+   [local-config/gemini.env.local](</c:/dev/Project Chemistry - Energy Cycle/Energy Cycle App/local-config/gemini.env.local>)
+3. Add your Gemini key and optional model override there
 4. Start the app:
    `npm run dev`
 5. Open:
