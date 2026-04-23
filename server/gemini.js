@@ -984,7 +984,7 @@ function validateLabelStoichiometry(arrowConnections, question) {
 
       if (conn.toNode) {
         const coeff = findCoeffInNodeText(conn.toNode, refProduct.formulaKey);
-        if (coeff > 1) {
+        if (coeff >= 1) {
           const valuePerMole = row.value / refProduct.coeff;
           const expected = coeff * valuePerMole;
           if (Math.abs(labelNum - expected) > 0.6) {
@@ -995,7 +995,7 @@ function validateLabelStoichiometry(arrowConnections, question) {
 
       if (conn.fromNode) {
         const coeff = findCoeffInNodeText(conn.fromNode, refProduct.formulaKey);
-        if (coeff > 1) {
+        if (coeff >= 1) {
           const valuePerMole = row.value / refProduct.coeff;
           const expected = -coeff * valuePerMole;
           if (Math.abs(labelNum - expected) > 0.6) {
