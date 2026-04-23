@@ -885,9 +885,34 @@ function isLabelFormattingNote(note) {
   );
 }
 
+function isUncertaintyExtractionNote(note) {
+  if (typeof note !== "string") {
+    return false;
+  }
+
+  const n = note.toLowerCase();
+  return (
+    n.includes("uncertain") ||
+    n.includes("unclear") ||
+    n.includes("ambiguous") ||
+    n.includes("illegible") ||
+    n.includes("hard to read") ||
+    n.includes("difficult to read") ||
+    n.includes("could not") ||
+    n.includes("cannot determine") ||
+    n.includes("can't determine") ||
+    n.includes("unable to determine") ||
+    n.includes("not confidently") ||
+    n.includes("not clear") ||
+    n.includes("uncertainty")
+  );
+}
+
 function isLowConfidenceExtraction(extractionNotes, uncertainExtractions) {
-  const substantiveNotes = extractionNotes.filter((note) => !isLabelFormattingNote(note));
-  return substantiveNotes.length > 0 || uncertainExtractions.length > 0;
+  const uncertaintyNotes = extractionNotes.filter(
+    (note) => !isLabelFormattingNote(note) && isUncertaintyExtractionNote(note)
+  );
+  return uncertaintyNotes.length > 0 || uncertainExtractions.length > 0;
 }
 
 function isTargetReactionArrow(entry, targetReaction) {
@@ -1044,6 +1069,120 @@ function extractProductFromReferenceEquation(equationText) {
   };
 }
 
+function parseStoichiometricTerms(text) {
+  return maskCharges(stripStandaloneAqueousContext(String(text ?? "")))
+    .split("+")
+    .map((s) => unmaskCharges(s).trim())
+    .filter(Boolean)
+    .map((term) => {
+      const match = term.match(/^(\d+(?:\/\d+)?|\d*\.\d+)?\s*(.+)$/);
+      if (!match) {
+        return null;
+      }
+
+      const [, coeffText, formulaAndState] = match;
+      return {
+        coeff: parseNodeCoefficient(coeffText),
+        formulaKey: normalizeFormulaKey(formulaAndState),
+        exactFormulaKey: normalizeFormulaKey(formulaAndState, { preserveState: true }),
+        hasExplicitState: hasExplicitSpeciesState(formulaAndState),
+      };
+    })
+    .filter(Boolean);
+}
+
+function buildTermIndex(text) {
+  const exactCounts = new Map();
+  const formulaCounts = new Map();
+  const noStateCounts = new Map();
+
+  for (const term of parseStoichiometricTerms(text)) {
+    exactCounts.set(term.exactFormulaKey, (exactCounts.get(term.exactFormulaKey) || 0) + term.coeff);
+    formulaCounts.set(term.formulaKey, (formulaCounts.get(term.formulaKey) || 0) + term.coeff);
+    if (!term.hasExplicitState) {
+      noStateCounts.set(term.formulaKey, (noStateCounts.get(term.formulaKey) || 0) + term.coeff);
+    }
+  }
+
+  return { exactCounts, formulaCounts, noStateCounts };
+}
+
+function getAvailableTermCount(index, targetTerm) {
+  const exactAvail = index.exactCounts.get(targetTerm.exactFormulaKey) || 0;
+  const noStateAvail = index.noStateCounts.get(targetTerm.formulaKey) || 0;
+  const formulaAvail = index.formulaCounts.get(targetTerm.formulaKey) || 0;
+  return { exactAvail, noStateAvail, formulaAvail };
+}
+
+function matchesScaledSide(nodeText, sideTerms, multiplier) {
+  const index = buildTermIndex(nodeText);
+  let sawStateConflict = false;
+
+  for (const term of sideTerms) {
+    const required = term.coeff * multiplier;
+    const { exactAvail, noStateAvail, formulaAvail } = getAvailableTermCount(index, term);
+
+    if (exactAvail >= required) {
+      continue;
+    }
+
+    if (exactAvail + noStateAvail >= required) {
+      continue;
+    }
+
+    if (formulaAvail > 0) {
+      sawStateConflict = true;
+    }
+
+    return { matched: false, sawStateConflict };
+  }
+
+  return { matched: true, sawStateConflict };
+}
+
+function findRowMatchMultipliers(nodeText, sideTerms) {
+  const index = buildTermIndex(nodeText);
+  const candidates = [];
+  const seen = new Set();
+
+  for (const term of sideTerms) {
+    const { exactAvail, noStateAvail, formulaAvail } = getAvailableTermCount(index, term);
+    for (const available of [exactAvail, exactAvail + noStateAvail, formulaAvail]) {
+      if (available >= term.coeff && term.coeff > 0) {
+        const ratio = Math.round((available / term.coeff) * 1000) / 1000;
+        const key = String(ratio);
+        if (!seen.has(key)) {
+          seen.add(key);
+          candidates.push(ratio);
+        }
+      }
+    }
+  }
+
+  candidates.sort((a, b) => a - b);
+  return candidates;
+}
+
+function matchReferenceRowDirection(fromNode, toNode, leftTerms, rightTerms) {
+  let sawStateConflict = false;
+
+  for (const multiplier of findRowMatchMultipliers(toNode, rightTerms)) {
+    const rightMatch = matchesScaledSide(toNode, rightTerms, multiplier);
+    sawStateConflict ||= rightMatch.sawStateConflict;
+    if (!rightMatch.matched) {
+      continue;
+    }
+
+    const leftMatch = matchesScaledSide(fromNode, leftTerms, multiplier);
+    sawStateConflict ||= leftMatch.sawStateConflict;
+    if (leftMatch.matched) {
+      return { matched: true, multiplier, sawStateConflict };
+    }
+  }
+
+  return { matched: false, multiplier: 0, sawStateConflict };
+}
+
 function findCoeffInNodeText(nodeText, targetProduct) {
   let fallbackMatch = null;
   let stateConflictMatch = null;
@@ -1091,31 +1230,30 @@ function deriveExpectedLabelTotal(conn, question) {
       continue;
     }
 
-    const refProduct = extractProductFromReferenceEquation(row.equation);
-    if (!refProduct) {
+    const reaction = splitReactionSides(row.equation);
+    if (!reaction) {
       continue;
     }
 
-    const valuePerMole = row.value / refProduct.coeff;
-
-    if (conn.toNode) {
-      const match = findCoeffInNodeText(conn.toNode, refProduct);
-      if (match.matchType === "state-conflict") {
-        sawStateConflict = true;
-      } else if (match.coeff >= 1) {
-        expectedTotal += match.coeff * valuePerMole;
-        contributionCount += 1;
-      }
+    const leftTerms = parseStoichiometricTerms(reaction.left);
+    const rightTerms = parseStoichiometricTerms(reaction.right);
+    if (leftTerms.length === 0 || rightTerms.length === 0) {
+      continue;
     }
 
-    if (conn.fromNode) {
-      const match = findCoeffInNodeText(conn.fromNode, refProduct);
-      if (match.matchType === "state-conflict") {
-        sawStateConflict = true;
-      } else if (match.coeff >= 1) {
-        expectedTotal += -match.coeff * valuePerMole;
-        contributionCount += 1;
-      }
+    const forwardMatch = matchReferenceRowDirection(conn.fromNode, conn.toNode, leftTerms, rightTerms);
+    sawStateConflict ||= forwardMatch.sawStateConflict;
+    if (forwardMatch.matched) {
+      expectedTotal += forwardMatch.multiplier * row.value;
+      contributionCount += 1;
+      continue;
+    }
+
+    const reverseMatch = matchReferenceRowDirection(conn.fromNode, conn.toNode, rightTerms, leftTerms);
+    sawStateConflict ||= reverseMatch.sawStateConflict;
+    if (reverseMatch.matched) {
+      expectedTotal += -reverseMatch.multiplier * row.value;
+      contributionCount += 1;
     }
   }
 
@@ -1124,7 +1262,7 @@ function deriveExpectedLabelTotal(conn, question) {
 
 function validateLabelStoichiometry(arrowConnections, question) {
   return arrowConnections.map((conn) => {
-    if (conn.labelStatus !== "correct") {
+    if (isMissingLabel(conn.label) || isDeltaHLabel(conn.label)) {
       return conn;
     }
 
@@ -1138,7 +1276,7 @@ function validateLabelStoichiometry(arrowConnections, question) {
       if (Math.abs(labelTotal - expectedTotal) > 0.6) {
         return { ...conn, labelStatus: "incorrect" };
       }
-      return conn;
+      return { ...conn, labelStatus: "correct" };
     }
 
     if (sawStateConflict) {
