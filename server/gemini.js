@@ -667,6 +667,8 @@ function collectMissingStateSpeciesFromNodes(...nodeTexts) {
   const seen = new Set();
   for (const nodeText of nodeTexts) {
     for (const species of collectSpeciesFromText(nodeText)) {
+      // Bare "aq" is a solvent token (dissolution indicator), not a species that needs a state symbol.
+      if (species.normalizedFormula === "aq") continue;
       if (!species.hasStateSymbol && !seen.has(species.normalizedFormula)) {
         seen.add(species.normalizedFormula);
         missing.push(species.formula);
