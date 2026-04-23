@@ -651,6 +651,7 @@ function mergeDirectionalArrowEntries(entries) {
       arrowLabel: combinedLabel,
       labelStatus,
       hasCompleteLabel: !entry.hasMissingLabel,
+      directionConflict: false,
     };
   });
 
@@ -673,6 +674,7 @@ function mergeDirectionalArrowEntries(entries) {
     if (directionCount > 1) {
       return {
         ...entry,
+        directionConflict: true,
         labelStatus: "incorrect",
       };
     }
@@ -705,6 +707,33 @@ function hasOppositeDirections(entries) {
   }
 
   return false;
+}
+
+function revalidateMergedArrowEntries(entries, question, targetReaction) {
+  const validatedEntries = [...entries];
+  const revalidatableEntries = [];
+  const revalidatableIndexes = [];
+
+  entries.forEach((entry, index) => {
+    if (entry.directionConflict || entry.source !== "arrow") {
+      return;
+    }
+
+    revalidatableEntries.push(entry);
+    revalidatableIndexes.push(index);
+  });
+
+  const revalidatedSubset = validateBondEnergyLabelSigns(
+    validateLabelStoichiometry(revalidatableEntries, question),
+    question,
+    targetReaction,
+  );
+
+  revalidatableIndexes.forEach((entryIndex, subsetIndex) => {
+    validatedEntries[entryIndex] = revalidatedSubset[subsetIndex];
+  });
+
+  return validatedEntries;
 }
 
 function collectMissingStateSpeciesFromNodes(...nodeTexts) {
@@ -744,7 +773,11 @@ function reconstructArrowEquations(question, extractedEquations, extractedNodeLa
       return { ...entry, fromNode, toNode, equation };
     });
 
-    const mergedEntries = mergeDirectionalArrowEntries(snappedEntries);
+    const mergedEntries = revalidateMergedArrowEntries(
+      mergeDirectionalArrowEntries(snappedEntries),
+      question,
+      targetReaction,
+    );
 
     if (targetReaction) {
       const targetEqComparable = normalizeComparableChemistryText(
@@ -772,8 +805,9 @@ function reconstructArrowEquations(question, extractedEquations, extractedNodeLa
             label: "ΔH",
             arrowLabel: "ΔH",
             source: "arrow",
-            hasCompleteLabel: true,
-            labelStatus: "",
+            hasCompleteLabel: false,
+            labelStatus: "missing",
+            missingLabelHint: "Î”H",
           });
         } else {
           // Target reaction not drawn by student — include it for display but mark as inferred
@@ -1566,6 +1600,7 @@ export async function analyzeStudentWork(question, imageBase64, analysisImages =
       source: reconstructedEquations[index]?.source || "explicit",
       hasCompleteLabel: reconstructedEquations[index]?.hasCompleteLabel ?? null,
       labelStatus: reconstructedEquations[index]?.labelStatus || "",
+      missingLabelHint: reconstructedEquations[index]?.missingLabelHint || "",
       missingStateSpecies: reconstructedEquations[index]?.missingStateSpecies || [],
     }));
 

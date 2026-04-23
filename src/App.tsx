@@ -621,12 +621,16 @@ export default function App() {
                                     <span className="text-[10px] font-black uppercase tracking-widest text-natural-muted">
                                       Label:
                                     </span>
-                                    {entry.arrowLabel ? (
+                                    {(entry.labelStatus === 'missing' || entry.hasCompleteLabel === false) && entry.missingLabelHint ? (
+                                      <span className="text-[10px] font-mono text-red-700">
+                                        missing <ChemistryText>{entry.missingLabelHint}</ChemistryText>
+                                      </span>
+                                    ) : entry.arrowLabel ? (
                                       <span className="text-[10px] font-mono text-natural-ink">
                                         <ChemistryText>{entry.arrowLabel}</ChemistryText>
                                       </span>
                                     ) : null}
-                                    {entry.labelStatus === 'missing' || entry.hasCompleteLabel === false ? (
+                                    {(entry.labelStatus === 'missing' || entry.hasCompleteLabel === false) && !entry.missingLabelHint ? (
                                       <span className="text-[9px] font-black uppercase tracking-widest text-red-600 bg-red-50 px-1.5 py-0.5 rounded">no label</span>
                                     ) : entry.labelStatus === 'incorrect' ? (
                                       <span className="text-[9px] font-black uppercase tracking-widest text-red-600 bg-red-50 px-1.5 py-0.5 rounded">incorrect</span>

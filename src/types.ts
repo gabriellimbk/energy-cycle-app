@@ -51,6 +51,7 @@ export interface Feedback {
     source: string;
     hasCompleteLabel: boolean | null;
     labelStatus: string;
+    missingLabelHint?: string;
     missingStateSpecies?: string[];
   }>;
 }
