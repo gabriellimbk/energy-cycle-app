@@ -688,9 +688,12 @@ function reconstructArrowEquations(question, extractedEquations, extractedNodeLa
       const targetEqComparable = normalizeComparableChemistryText(
         `${targetReaction.left} -> ${targetReaction.right}`
       );
-      const alreadyCaptured = mergedEntries.some(
-        (entry) => normalizeComparableChemistryText(entry.equation) === targetEqComparable
-      );
+      const targetEqStateStripped = normalizeForStateStripSnap(targetEqComparable);
+      const alreadyCaptured = mergedEntries.some((entry) => {
+        const entryComparable = normalizeComparableChemistryText(entry.equation);
+        if (entryComparable === targetEqComparable) return true;
+        return normalizeForStateStripSnap(entryComparable) === targetEqStateStripped;
+      });
 
       const deltaHArrowDrawn = mergedEntries.some((entry) => isDeltaHLabel(entry.label));
 
@@ -843,7 +846,8 @@ function isTargetReactionArrow(entry, targetReaction) {
 
 function isDeltaHLabel(label) {
   const normalized = normalizeComparableChemistryText(label);
-  return normalized === "δh" || normalized === "î´h" || normalized === "dh" || normalized === "∆h";
+  // Accept ΔH/∆H/dH/δh and subscripted forms like ΔHsol, ΔH_soln, ΔHhyd, ΔHf, ΔH(sol), etc.
+  return /^(?:δ|∆|î´|d|delta)h[_a-z0-9()]*$/.test(normalized);
 }
 
 function summarizeArrowLabels(arrowDerivedChecks, targetReaction, lowConfidenceExtraction, oppositeDirectionDetected = false) {

@@ -592,7 +592,7 @@ export default function App() {
                                       <span className="text-[9px] font-black uppercase tracking-widest text-red-600 bg-red-50 px-1.5 py-0.5 rounded">no label</span>
                                     ) : entry.labelStatus === 'incorrect' ? (
                                       <span className="text-[9px] font-black uppercase tracking-widest text-red-600 bg-red-50 px-1.5 py-0.5 rounded">incorrect</span>
-                                    ) : entry.labelStatus === 'correct' ? (
+                                    ) : entry.labelStatus === 'correct' && entry.status !== 'unverifiable' ? (
                                       <span className="text-[9px] font-black uppercase tracking-widest text-natural-green bg-green-50 px-1.5 py-0.5 rounded">correct</span>
                                     ) : null}
                                   </div>

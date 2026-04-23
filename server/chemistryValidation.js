@@ -51,10 +51,30 @@ export function normalizeSpeciesFormula(value) {
   const normalized = stripStateSuffix(value)
     .replace(/^["']|["']$/g, "")
     .replace(/^(\d+(?:\/\d+)?|\d*\.\d+)\s*/, "")
+    .replace(/\^?(?:\d[+\-]+|[+\-]+)$/, "")
     .trim();
 
   const match = normalized.match(/^([A-Za-z(][A-Za-z0-9()]*)$/);
   return match ? match[1] : "";
+}
+
+const CHARGE_PLUS_TOKEN = "";
+const CHARGE_MINUS_TOKEN = "";
+
+// Hide ion charges before splitting on "+" so that "Mg2+(g) + 2Cl-(g)" doesn't
+// get fragmented into ["Mg2", "(g) ", " 2Cl-(g)"]. A charge sign sits immediately
+// after a letter/digit/close-paren and is followed by a state symbol, whitespace,
+// end-of-string, or another separator.
+export function maskCharges(text) {
+  return text.replace(
+    /([A-Za-z0-9)])(\^?)([+\-])(?=\(|\s|$|,|\n|→|->|=)/g,
+    (_, prefix, caret, sign) =>
+      prefix + caret + (sign === "+" ? CHARGE_PLUS_TOKEN : CHARGE_MINUS_TOKEN)
+  );
+}
+
+export function unmaskCharges(text) {
+  return text.replace(//g, "+").replace(//g, "-");
 }
 
 export function collectSpeciesFromText(value) {
@@ -63,9 +83,9 @@ export function collectSpeciesFromText(value) {
     return [];
   }
 
-  return normalized
+  return maskCharges(normalized)
     .split(/(?:->|\u2192|\u27F6|\u27F9|=>|=|\+|\n|,)/)
-    .map((segment) => segment.trim())
+    .map((segment) => unmaskCharges(segment).trim())
     .filter(Boolean)
     .map((segment) => {
       const formula = normalizeSpeciesFormula(segment);
@@ -233,9 +253,9 @@ function parseSpecies(rawSpecies) {
 
 function parseEquationSide(rawSide) {
   const counts = {};
-  const species = rawSide
+  const species = maskCharges(rawSide)
     .split("+")
-    .map((part) => part.trim())
+    .map((part) => unmaskCharges(part).trim())
     .filter(Boolean)
     .map(parseSpecies);
 
